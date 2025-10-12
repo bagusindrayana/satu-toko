@@ -1,0 +1,11 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html, body, #root { height: 100%; }
+body { @apply bg-gray-50 text-gray-800; }
+.container { @apply min-h-screen flex items-center justify-center p-4; }
+.card { @apply bg-white shadow rounded p-6 w-full max-w-3xl; }
+.tag { @apply inline-flex items-center bg-blue-100 text-blue-800 px-2 py-1 rounded-full mr-2 mt-2; }
+.result-item { @apply flex items-center gap-4 p-3 border-b last:border-b-0; }
+.result-photo { @apply w-20 h-20 bg-gray-100 rounded object-cover; }
