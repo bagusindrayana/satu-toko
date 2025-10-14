@@ -1,12 +1,50 @@
-import React, { useState, useRef } from "react";
+import React, { useState, useRef, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import "./index.css";
 
 function App() {
   const [tags, setTags] = useState([]);
   const [input, setInput] = useState("");
   const [results, setResults] = useState([]);
+  const [loading, setLoading] = useState(false);
   const inputRef = useRef(null);
+  const listenersRef = useRef([]);
+
+  useEffect(() => {
+    let unlistenProgress = null;
+    let unlistenDone = null;
+
+    (async () => {
+      try {
+        unlistenProgress = await listen("scrape:progress", (event) => {
+          const shop = event.payload;
+          setResults((prev) => {
+            // replace shop result
+            const idx = prev.findIndex((s) => s.shop_url === shop.shop_url);
+            if (idx >= 0) {
+              const copy = [...prev];
+              copy[idx] = shop;
+              return copy;
+            }
+            return [...prev, shop];
+          });
+        });
+
+        unlistenDone = await listen("scrape:done", () => {
+          setLoading(false);
+        });
+        listenersRef.current.push(unlistenProgress, unlistenDone);
+      } catch (e) {
+        console.error("Failed to subscribe to scrape events", e);
+      }
+    })();
+
+    return () => {
+      listenersRef.current.forEach((fn) => fn && fn());
+      listenersRef.current = [];
+    };
+  }, []);
 
   function addTagFromInput() {
     const v = input.trim();
@@ -23,12 +61,16 @@ function App() {
   async function onSearch() {
     if (tags.length === 0) return;
     setResults([]);
+    setLoading(true);
     try {
+      // invoke backend
       const res = await invoke("scrape_products", { queries: tags });
       setResults(res);
+      setLoading(false);
     } catch (e) {
       console.error(e);
       alert("Error during scraping: " + String(e));
+      setLoading(false);
     }
   }
 
@@ -42,7 +84,7 @@ function App() {
   }
 
   return (
-    <div className="container">
+    <div className="min-h-screen flex items-center justify-center p-4 w-full">
       <div className="card">
         <div className="flex justify-between items-start">
           <h2 className="text-xl font-semibold">Satu Toko — Scraper</h2>
@@ -87,17 +129,64 @@ function App() {
         <div className="mt-6">
           <h3 className="text-lg font-medium">Hasil</h3>
           <div className="mt-3">
-            {results.length === 0 && <p className="text-sm text-gray-500">Belum ada hasil</p>}
-            {results.map((r, idx) => (
-              <div key={idx} className="result-item">
-                <img src={r.photo || '/vite.svg'} alt="foto" className="result-photo"/>
-                <div className="flex-1">
-                  <div className="font-semibold">{r.name}</div>
-                  <div className="text-sm text-green-600">{r.price}</div>
-                  <div className="text-sm text-gray-600">{r.shop} — {r.location}</div>
+            {loading && <p className="text-sm text-gray-500">Mencari... tunggu sebentar</p>}
+            {!loading && results.length === 0 && <p className="text-sm text-gray-500">Belum ada hasil</p>}
+            {results.map((shop, sIdx) => {
+              // determine if this shop has products for every query
+              const allFound = shop.results && shop.results.length > 0 && shop.results.every(r => (r.products && r.products.length > 0));
+              return (
+                <div key={sIdx} className={"shop-block " + (allFound ? "shop-highlight" : "")}>
+                  <div className="shop-header flex items-center justify-between">
+                    <div>
+                      <a href={shop.shop_url} target="_blank" rel="noreferrer" className="shop-name">{shop.shop_name}</a>
+                      <div className="shop-subtitle text-sm text-gray-500">{shop.shop_url}</div>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <div className="shop-count text-sm text-gray-600">{shop.results ? shop.results.length : 0} query</div>
+                      {allFound && <div className="badge bg-green-100 text-green-800 text-sm px-2 py-1 rounded">Semua produk ditemukan</div>}
+                    </div>
+                  </div>
+                  <div className="shop-queries mt-2">
+                    {shop.results.map((qr, qIdx) => (
+                      <div key={qIdx} className="query-block">
+                        <div className="query-title flex items-center gap-3">
+                          <div className="query-label text-sm text-gray-600">Hasil untuk:</div>
+                          <div className="query-pill text-sm font-medium bg-gray-100 px-2 py-1 rounded">{qr.query}</div>
+                          <div className="query-count text-sm text-gray-500">({qr.products ? qr.products.length : 0})</div>
+                        </div>
+                        <div className="mt-2">
+                          {(!qr.products || qr.products.length === 0) && <div className="text-sm text-gray-500">Tidak ada hasil</div>}
+                          {qr.products && qr.products.length > 0 && (
+                            <div className="products-grid">
+                              {qr.products.map((p, pIdx) => {
+                                const img = p.photo || p.image || p.thumbnail || (p.photos && p.photos[0]) || null;
+                                return (
+                                  <div key={pIdx} className="product-card">
+                                    <a href={p.link} target="_blank" rel="noreferrer" className="product-link">
+                                      <div className="product-image-wrap">
+                                        {img ? (
+                                          <img src={img} alt={p.name || 'product'} className="product-image" />
+                                        ) : (
+                                          <div className="product-image product-image--placeholder">No image</div>
+                                        )}
+                                      </div>
+                                      <div className="product-body">
+                                        <div className="product-name">{p.name || p.link}</div>
+                                        {p.price && <div className="product-price">{p.price}</div>}
+                                      </div>
+                                    </a>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       </div>

@@ -4,8 +4,40 @@
 
 html, body, #root { height: 100%; }
 body { @apply bg-gray-50 text-gray-800; }
-.container { @apply min-h-screen flex items-center justify-center p-4; }
-.card { @apply bg-white shadow rounded p-6 w-full max-w-3xl; }
+.card { @apply bg-white shadow rounded p-6 w-full max-w-4xl m-auto; }
 .tag { @apply inline-flex items-center bg-blue-100 text-blue-800 px-2 py-1 rounded-full mr-2 mt-2; }
 .result-item { @apply flex items-center gap-4 p-3 border-b last:border-b-0; }
 .result-photo { @apply w-20 h-20 bg-gray-100 rounded object-cover; }
+
+/* Shop and query UI */
+.shop-header { @apply border-b pb-3 mb-3; }
+.shop-name { @apply text-lg font-semibold text-gray-800; }
+.shop-subtitle { @apply text-xs text-gray-500 truncate; }
+.shop-count { @apply text-sm text-gray-600; }
+
+.query-title { @apply mb-2; }
+.query-label { @apply text-sm text-gray-600; }
+.query-pill { @apply bg-gray-100 text-gray-800 px-2 py-1 rounded; }
+.query-count { @apply text-sm text-gray-500 ml-2; }
+
+.query-block { @apply mb-4; }
+.shop-block { @apply mb-6; }
+
+/* Highlight when shop has results for every query */
+.shop-highlight { @apply border-l-4 border-green-300 bg-green-50/40 p-4 rounded; }
+.badge { @apply inline-flex items-center gap-2; }
+
+/* Products grid */
+.products-grid {
+	@apply grid gap-4 grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 mt-3;
+}
+.product-card {
+	@apply bg-white border rounded shadow-sm overflow-hidden;
+}
+.product-link { @apply block no-underline text-current; }
+.product-image-wrap { @apply w-full h-40 bg-gray-50 flex items-center justify-center overflow-hidden; }
+.product-image { @apply w-full h-full object-cover; }
+.product-image--placeholder { @apply w-full h-full flex items-center justify-center text-xs text-gray-500 bg-gray-100; }
+.product-body { @apply p-3; }
+.product-name { @apply text-sm font-medium mb-1; }
+.product-price { @apply text-sm text-green-600; }
