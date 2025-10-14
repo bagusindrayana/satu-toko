@@ -33,7 +33,6 @@ pub struct ShopResults {
     pub results: Vec<QueryResult>,
 }
 
-
 #[tauri::command]
 async fn ensure_chromedriver() -> Result<String, String> {
     use reqwest::Client;
@@ -42,19 +41,18 @@ async fn ensure_chromedriver() -> Result<String, String> {
     use std::io::Cursor;
     use zip::ZipArchive;
 
-    // Determine local app data path
-    let local_app_data = env::var("LOCALAPPDATA").map_err(|e| e.to_string())?;
-    let driver_dir = PathBuf::from(local_app_data)
+    // Determine local app data path (multiplatform)
+    let driver_dir = dirs::data_local_dir()
+        .ok_or("Could not determine local data directory")?
         .join("satu-toko")
         .join("chromedriver");
     fs::create_dir_all(&driver_dir).map_err(|e| e.to_string())?;
 
-    // 1) Find installed chrome version (Windows)
+    // 1) Find installed chrome version
     let mut chrome_version = get_chrome_version().map_err(|e| e.to_string())?;
-    info!("Versi Chrome terdeteksi : {}", chrome_version);
+    info!("Detected Chrome version: {}", chrome_version);
 
     let parts: Vec<&str> = chrome_version.split('.').collect();
-
     let prefix = parts.iter().take(2).map(|s| s.to_string()).collect::<Vec<_>>().join(".");
     if !prefix.is_empty() {
         chrome_version = prefix;
@@ -90,20 +88,28 @@ async fn ensure_chromedriver() -> Result<String, String> {
             .ok_or("no versions in JSON")?
     };
 
-    // Find platform download for windows (windows-x64) and platform name
+    // Find platform download based on OS
+    let platform_name = if cfg!(target_os = "windows") {
+        "win64"
+    } else if cfg!(target_os = "macos") {
+        "mac-x64"
+    } else {
+        "linux64"
+    };
+
     let downloads = chosen["downloads"]["chromedriver"]
         .as_array()
         .ok_or("no chromedriver downloads")?;
     let mut url: Option<String> = None;
     for d in downloads {
         if let Some(platform) = d["platform"].as_str() {
-            if platform.contains("win64") {
+            if platform.contains(platform_name) {
                 url = d["url"].as_str().map(|s| s.to_string());
                 break;
             }
         }
     }
-    let url = url.ok_or("no windows chromedriver in JSON")?;
+    let url = url.ok_or(format!("no {} chromedriver in JSON", platform_name))?;
 
     // Download zip
     let bytes = client
@@ -116,14 +122,22 @@ async fn ensure_chromedriver() -> Result<String, String> {
         .map_err(|e| e.to_string())?;
     let mut archive = ZipArchive::new(Cursor::new(bytes)).map_err(|e| e.to_string())?;
 
-    // find chromedriver.exe inside zip
+    // Find chromedriver inside zip (platform-specific executable name)
+    let executable_name = if cfg!(target_os = "windows") {
+        "chromedriver.exe"
+    } else {
+        "chromedriver"
+    };
+
     for i in 0..archive.len() {
         let mut file = archive.by_index(i).map_err(|e| e.to_string())?;
         let name = file.name().to_string();
-        if name.ends_with("chromedriver.exe") {
-            let out_path = driver_dir.join("chromedriver.exe");
+        if name.ends_with(executable_name) {
+            let out_path = driver_dir.join(executable_name);
             let mut out_file = fs::File::create(&out_path).map_err(|e| e.to_string())?;
             std::io::copy(&mut file, &mut out_file).map_err(|e| e.to_string())?;
+            
+            // Set executable permissions on Unix systems
             #[cfg(unix)]
             {
                 use std::os::unix::fs::PermissionsExt;
@@ -136,19 +150,104 @@ async fn ensure_chromedriver() -> Result<String, String> {
             return Ok(out_path.to_string_lossy().to_string());
         }
     }
-    Err("chromedriver.exe not found in archive".to_string())
+    Err(format!("{} not found in archive", executable_name).to_string())
+}
+
+// Helper function to find Chrome executable path
+fn find_chrome_executable() -> Option<String> {
+    #[cfg(target_os = "windows")]
+    {
+        // Try common Windows Chrome paths
+        let paths = [
+            r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+            r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+        ];
+        
+        for path in &paths {
+            if std::path::Path::new(path).exists() {
+                return Some(path.to_string());
+            }
+        }
+        
+        // Try just "chrome" which might be in PATH
+        if is_command_available("chrome") {
+            return Some("chrome".to_string());
+        }
+        
+        // Try "chrome.exe" 
+        if is_command_available("chrome.exe") {
+            return Some("chrome.exe".to_string());
+        }
+    }
+    
+    #[cfg(target_os = "macos")]
+    {
+        // Try the standard macOS Chrome path
+        let path = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
+        if std::path::Path::new(path).exists() {
+            return Some(path.to_string());
+        }
+        
+        // Try "google-chrome" which might be in PATH
+        if is_command_available("google-chrome") {
+            return Some("google-chrome".to_string());
+        }
+    }
+    
+    #[cfg(target_os = "linux")]
+    {
+        // Try common Linux Chrome/Chromium commands
+        let commands = ["google-chrome", "google-chrome-stable", "chromium-browser", "chromium"];
+        for cmd in &commands {
+            if is_command_available(cmd) {
+                return Some(cmd.to_string());
+            }
+        }
+    }
+    
+    // Universal fallback - try common commands
+    let commands = ["chrome", "google-chrome", "chromium-browser", "chromium"];
+    for cmd in &commands {
+        if is_command_available(cmd) {
+            return Some(cmd.to_string());
+        }
+    }
+    
+    None
+}
+
+// Helper function to check if a command is available
+fn is_command_available(command: &str) -> bool {
+    use std::process::Command;
+    #[cfg(target_os = "windows")]
+    {
+        Command::new("where")
+            .arg(command)
+            .output()
+            .map(|output| output.status.success() && !output.stdout.is_empty())
+            .unwrap_or(false)
+    }
+    
+    #[cfg(not(target_os = "windows"))]
+    {
+        Command::new("which")
+            .arg(command)
+            .output()
+            .map(|output| output.status.success() && !output.stdout.is_empty())
+            .unwrap_or(false)
+    }
 }
 
 fn get_chrome_version() -> Result<String, anyhow::Error> {
     use std::process::Command;
 
+    // Platform-specific Chrome version detection
     #[cfg(target_os = "windows")]
     {
-        // Coba dapatkan versi Chrome dari registry Windows
+        // Try to get Chrome version from Windows registry
         use std::process::Stdio;
 
         if let Ok(output) = Command::new("reg")
-            // .args(&["query", r"HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\chrome.exe", "/ve"])
             .args(&[
                 "query",
                 r"HKEY_CURRENT_USER\Software\Google\Chrome\BLBeacon",
@@ -161,7 +260,6 @@ fn get_chrome_version() -> Result<String, anyhow::Error> {
         {
             if output.status.success() {
                 let output_str = String::from_utf8_lossy(&output.stdout).to_string();
-                // Parse output untuk mendapatkan path Chrome
                 for line in output_str.lines() {
                     if line.contains("REG_SZ") {
                         let parts: Vec<&str> = line.split("REG_SZ").collect();
@@ -174,39 +272,35 @@ fn get_chrome_version() -> Result<String, anyhow::Error> {
             }
         }
 
-        if let Ok(version_output) = Command::new("chrome")
-            .arg("--version")
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .output()
-        {
-            if version_output.status.success() {
-                let version_str = String::from_utf8_lossy(&version_output.stdout).to_string();
-                // Ekstrak versi (contoh: "Google Chrome 140.0.7182.0")
-                let version_parts: Vec<&str> = version_str.split_whitespace().collect();
-                if version_parts.len() > 2 {
-                    let version = version_parts[2];
-                    return Ok(version.to_string());
+        // Fallback to command line approach with multiple options
+        if let Some(chrome_path) = find_chrome_executable() {
+            if let Ok(version_output) = Command::new(&chrome_path)
+                .arg("--version")
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .output()
+            {
+                if version_output.status.success() {
+                    let version_str = String::from_utf8_lossy(&version_output.stdout).to_string();
+                    let version_parts: Vec<&str> = version_str.split_whitespace().collect();
+                    if version_parts.len() > 2 {
+                        let version = version_parts[2];
+                        return Ok(version.to_string());
+                    }
                 }
             }
         }
     }
 
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(target_os = "macos")]
     {
-        let candidates = [
-            "chrome",
-            "chrome.exe",
-            "google-chrome",
-            "google-chrome-stable",
-        ];
-        for c in &candidates {
-            if let Ok(o) = Command::new(c).arg("--version").output() {
+        // Try macOS-specific locations
+        if let Some(chrome_path) = find_chrome_executable() {
+            if let Ok(o) = Command::new(&chrome_path).arg("--version").output() {
                 if o.status.success() {
                     let s = String::from_utf8_lossy(&o.stdout).to_string();
                     let parts: Vec<&str> = s.split_whitespace().collect();
                     if let Some(ver) = parts.last() {
-                        // return major.minor
                         let v2 = ver.split('.').take(2).collect::<Vec<_>>().join(".");
                         return Ok(v2);
                     }
@@ -214,7 +308,44 @@ fn get_chrome_version() -> Result<String, anyhow::Error> {
             }
         }
     }
-    // default
+
+    #[cfg(target_os = "linux")]
+    {
+        if let Some(chrome_cmd) = find_chrome_executable() {
+            if let Ok(o) = Command::new(&chrome_cmd).arg("--version").output() {
+                if o.status.success() {
+                    let s = String::from_utf8_lossy(&o.stdout).to_string();
+                    let parts: Vec<&str> = s.split_whitespace().collect();
+                    if let Some(ver) = parts.get(2) {  // Chrome version is typically the 3rd word
+                        let v2 = ver.split('.').take(2).collect::<Vec<_>>().join(".");
+                        return Ok(v2);
+                    } else if let Some(ver) = parts.last() {  // Fallback for other formats
+                        let v2 = ver.split('.').take(2).collect::<Vec<_>>().join(".");
+                        return Ok(v2);
+                    }
+                }
+            }
+        }
+    }
+
+    // Universal fallback
+    if let Some(chrome_cmd) = find_chrome_executable() {
+        if let Ok(o) = Command::new(&chrome_cmd).arg("--version").output() {
+            if o.status.success() {
+                let s = String::from_utf8_lossy(&o.stdout).to_string();
+                let parts: Vec<&str> = s.split_whitespace().collect();
+                if let Some(ver) = parts.get(2) {  // Chrome version is typically the 3rd word
+                    let v2 = ver.split('.').take(2).collect::<Vec<_>>().join(".");
+                    return Ok(v2);
+                } else if let Some(ver) = parts.last() {  // Fallback for other formats
+                    let v2 = ver.split('.').take(2).collect::<Vec<_>>().join(".");
+                    return Ok(v2);
+                }
+            }
+        }
+    }
+
+    // Default fallback version
     Ok("116".to_string())
 }
 
@@ -225,7 +356,7 @@ async fn scrape_products(window: tauri::Window, queries: Vec<String>) -> Result<
     use thirtyfour::prelude::*;
     use thirtyfour::Key;
 
-    // Cek chromedriver
+    // Check chromedriver
     let driver_path = ensure_chromedriver().await.map_err(|e| e.to_string())?;
 
     // Start chromedriver
@@ -590,19 +721,44 @@ async fn scrape_products(window: tauri::Window, queries: Vec<String>) -> Result<
 #[tauri::command]
 async fn open_chrome_with_driver() -> Result<(), String> {
     use std::env;
-    let local_app_data = env::var("LOCALAPPDATA").map_err(|e| e.to_string())?;
-    let driver_dir = PathBuf::from(local_app_data)
+    
+    // Determine driver directory (multiplatform)
+    let driver_dir = dirs::data_local_dir()
+        .ok_or("Could not determine local data directory")?
         .join("satu-toko")
         .join("chromedriver");
+    
+    // Platform-specific file explorer
     #[cfg(target_os = "windows")]
     {
         let path_str = driver_dir.to_string_lossy().to_string();
         std::process::Command::new("explorer")
             .arg(path_str)
             .spawn()
+            .map(|_| ())  // Convert Result<Child, Error> to Result<(), Error>
             .map_err(|e| e.to_string())?;
     }
-
+    
+    #[cfg(target_os = "macos")]
+    {
+        let path_str = driver_dir.to_string_lossy().to_string();
+        std::process::Command::new("open")
+            .arg(path_str)
+            .spawn()
+            .map(|_| ())  // Convert Result<Child, Error> to Result<(), Error>
+            .map_err(|e| e.to_string())?;
+    }
+    
+    #[cfg(target_os = "linux")]
+    {
+        let path_str = driver_dir.to_string_lossy().to_string();
+        std::process::Command::new("xdg-open")
+            .arg(path_str)
+            .spawn()
+            .map(|_| ())  // Convert Result<Child, Error> to Result<(), Error>
+            .map_err(|e| e.to_string())?;
+    }
+    
     Ok(())
 }
 
@@ -615,11 +771,21 @@ async fn get_chrome_and_driver_info() -> Result<(String, String), String> {
     // Get ChromeDriver version by running chromedriver --version
     use std::env;
     use std::process::Command;
-    let local_app_data = env::var("LOCALAPPDATA").map_err(|e| e.to_string())?;
-    let driver_path = PathBuf::from(local_app_data)
+    
+    // Determine driver path (multiplatform)
+    let driver_dir = dirs::data_local_dir()
+        .ok_or("Could not determine local data directory")?
         .join("satu-toko")
-        .join("chromedriver")
-        .join("chromedriver.exe");
+        .join("chromedriver");
+    
+    // Platform-specific executable name
+    let executable_name = if cfg!(target_os = "windows") {
+        "chromedriver.exe"
+    } else {
+        "chromedriver"
+    };
+    
+    let driver_path = driver_dir.join(executable_name);
     
     if !driver_path.exists() {
         return Err("ChromeDriver not found".to_string());
@@ -647,8 +813,8 @@ async fn redownload_chromedriver() -> Result<String, String> {
     use std::fs;
     
     // Remove existing ChromeDriver
-    let local_app_data = env::var("LOCALAPPDATA").map_err(|e| e.to_string())?;
-    let driver_dir = PathBuf::from(local_app_data)
+    let driver_dir = dirs::data_local_dir()
+        .ok_or("Could not determine local data directory")?
         .join("satu-toko")
         .join("chromedriver");
     
@@ -665,40 +831,65 @@ async fn redownload_chromedriver() -> Result<String, String> {
 #[tauri::command]
 async fn open_browser_with_driver() -> Result<(), String> {
     use std::env;
-    use std::process::Command;
-    use std::thread;
-    use std::time::Duration;
+    use std::path::PathBuf;
+    use thirtyfour::prelude::*;
+    use thirtyfour::Key;
+    // use std::process::Command;
+    // use std::thread;
+    // use std::time::Duration;
     
-    // Start ChromeDriver
-    let local_app_data = env::var("LOCALAPPDATA").map_err(|e| e.to_string())?;
-    let driver_path = PathBuf::from(local_app_data)
-        .join("satu-toko")
-        .join("chromedriver")
-        .join("chromedriver.exe");
-    
-    if !driver_path.exists() {
-        return Err("ChromeDriver not found".to_string());
-    }
-    
-    let driver_dir = driver_path.parent().ok_or("Invalid driver path")?;
-    
-    // Launch ChromeDriver in a separate thread
-    let _child = Command::new(&driver_path)
+
+    // Check chromedriver
+    let driver_path = ensure_chromedriver().await.map_err(|e| e.to_string())?;
+
+    // Start chromedriver
+    let driver_path_buf = PathBuf::from(driver_path);
+    let driver_dir = driver_path_buf.parent().ok_or("invalid driver path")?;
+
+    // Launch chromedriver
+    let mut child = std::process::Command::new(driver_path_buf.as_os_str())
         .arg("--port=9515")
         .current_dir(driver_dir)
         .spawn()
-        .map_err(|e| format!("Failed to start ChromeDriver: {}", e))?;
+        .map_err(|e| format!("failed to spawn chromedriver: {}", e))?;
+
+
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+
+    let caps = DesiredCapabilities::chrome();
     
-    // Give ChromeDriver time to start
-    thread::sleep(Duration::from_secs(2));
+    // Connect to WebDriver. The ? converts Err(WebDriverError) to Err(String).
+    let driver = WebDriver::new("http://127.0.0.1:9515", caps)
+        .await
+        .map_err(|e| format!("Fatal Error: Driver initialization failed. Details: {}", e.to_string()))?;
     
-    // Open Chrome browser connected to ChromeDriver
-    let chrome_output = Command::new("chrome")
-        .arg("--remote-debugging-port=9222")
-        .spawn()
-        .map_err(|e| format!("Failed to start Chrome: {}", e))?;
+    let url = "https://www.tokopedia.com/";
+    let result_of_goto = driver.goto(url).await;
     
-    Ok(())
+    // 💡 The 'result' variable MUST be a Result<(), String> to be returned.
+    let final_result: Result<(), String> = match result_of_goto {
+        // SUCCESS: Navigation succeeded. Return Ok(()).
+        Ok(()) => {
+            let _ = child.kill();
+            println!("Success: Navigated to '{}'", url);
+            Ok(())
+        },
+        
+        // ERROR: Navigation failed. Format the error string and wrap it in Err().
+        Err(e) => {
+            let _ = child.kill();
+            // Use {:?} to format the WebDriverError for logging/debugging
+            Err(format!("Navigation Error: Failed to navigate to '{}'. Details: {:?}", url, e))
+        },
+    };
+
+    
+
+    // // Clean up the driver session
+    // let _ = driver.quit().await;
+
+    // Return the final Result<(), String>
+    final_result
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -711,9 +902,9 @@ pub fn run() {
             ensure_chromedriver,
             scrape_products,
             open_chrome_with_driver,
-            get_chrome_and_driver_info,  // Added new command
-            redownload_chromedriver,     // Added new command
-            open_browser_with_driver     // Added new command
+            get_chrome_and_driver_info,
+            redownload_chromedriver,
+            open_browser_with_driver
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
