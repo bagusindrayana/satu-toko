@@ -16,6 +16,7 @@ pub struct Product {
     pub shop: String,
     pub location: String,
     pub photo: String,
+    pub link: String,
 }
 
 // Note: these functions perform best-effort tasks. In production, more error handling and security checks are required.
@@ -289,12 +290,28 @@ async fn scrape_products(queries: Vec<String>) -> Result<Vec<Product>, String> {
                 Err(_) => String::new(),
             };
 
+            // link: href attribute of the anchor
+            let link = match c.attr("href").await {
+                Ok(opt) => opt.unwrap_or_default(),
+                Err(_) => String::new(),
+            };
+
+            // Normalize scheme-relative or root-relative URLs to absolute
+            let link = if link.starts_with("//") {
+                format!("https:{}", link)
+            } else if link.starts_with('/') {
+                format!("https://www.tokopedia.com{}", link)
+            } else {
+                link
+            };
+
             results.push(Product {
                 name,
                 price,
                 shop,
                 location,
                 photo,
+                link,
             });
         }
     }
