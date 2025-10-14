@@ -41,3 +41,89 @@ body { @apply bg-gray-50 text-gray-800; }
 .product-body { @apply p-3; }
 .product-name { @apply text-sm font-medium mb-1; }
 .product-price { @apply text-sm text-green-600; }
+
+/* Expandable shop and product list */
+.expandable-container {
+  @apply border rounded-lg mb-4;
+}
+
+.expandable-header {
+  @apply flex justify-between items-center p-4 cursor-pointer bg-white hover:bg-gray-50 transition-colors;
+}
+
+.expandable-header h4 {
+  @apply font-medium m-0;
+}
+
+.expandable-icon {
+  @apply transform transition-transform duration-200;
+}
+
+.expandable-icon.rotated {
+  @apply rotate-180;
+}
+
+.expandable-content {
+  /* @apply overflow-hidden transition-all duration-300 ease-in-out; */
+  @apply overflow-hidden transition-all;
+}
+
+.expandable-content.collapsed {
+  @apply max-h-0;
+}
+
+.expandable-content.expanded {
+  @apply max-h-full;
+}
+
+.shop-item {
+  @apply border-b last:border-b-0;
+}
+
+.shop-summary {
+  @apply p-4;
+}
+
+.shop-details {
+  @apply bg-gray-50 p-4 border-t;
+}
+
+.query-item {
+  @apply mb-3 last:mb-0;
+}
+
+.query-summary {
+  @apply flex items-center justify-between p-3 bg-white rounded border cursor-pointer;
+}
+
+.query-products {
+  @apply mt-2 pl-4 border-l-2 border-gray-200;
+}
+
+.product-list {
+  @apply grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4 mt-3;
+}
+
+.product-item {
+  @apply bg-white border rounded p-3 flex items-center gap-3;
+}
+
+.product-image-thumb {
+  @apply w-16 h-16 object-cover rounded;
+}
+
+.product-info {
+  @apply flex-1;
+}
+
+.product-title {
+  @apply font-medium text-sm mb-1;
+}
+
+.product-link-text {
+  @apply text-blue-600 text-xs hover:underline;
+}
+
+.no-results {
+  @apply text-gray-500 text-sm italic;
+}

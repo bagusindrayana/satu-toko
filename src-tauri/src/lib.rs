@@ -223,6 +223,7 @@ async fn scrape_products(window: tauri::Window, queries: Vec<String>) -> Result<
     use std::env;
     use std::path::PathBuf;
     use thirtyfour::prelude::*;
+    use thirtyfour::Key;
 
     // Cek chromedriver
     let driver_path = ensure_chromedriver().await.map_err(|e| e.to_string())?;
@@ -260,6 +261,8 @@ async fn scrape_products(window: tauri::Window, queries: Vec<String>) -> Result<
         let sel = r#"input[data-unify="Search"][type="search"]"#;
         if let Ok(el) = driver.find(By::Css(sel)).await {
             if el.is_displayed().await.unwrap_or(false) {
+                let _ = el.click().await;
+                // let _ = el.send_keys(Key::Backspace).await;
                 let _ = el.clear().await;
                 let _ = el.send_keys(query).await;
                 let _ = el.send_keys("\n").await;
@@ -303,7 +306,9 @@ async fn scrape_products(window: tauri::Window, queries: Vec<String>) -> Result<
             Ok(opt) => opt.unwrap_or_default(),
             Err(_) => String::new(),
         };
-
+        if link.contains("/product?perpage=") {
+            continue;
+        }
         let link = if link.starts_with("//") {
             format!("https:{}", link)
         } else if link.starts_with('/') {
@@ -316,10 +321,25 @@ async fn scrape_products(window: tauri::Window, queries: Vec<String>) -> Result<
         if let Some(rest) = link.strip_prefix(marker) {
             if let Some((slug, _)) = rest.split_once('/') {
                 if !slug.is_empty() {
-                    let name = match c.find(By::Css("div > div:nth-child(2) > div > span")).await {
-                        Ok(el) => el.text().await.unwrap_or_default(),
-                        Err(_) => String::new(),
+
+                    let spans = match c.find_all(By::Css("div:nth-child(1) > div:nth-child(2) > div:nth-child(1) span"))
+                        .await
+                    {
+                        Ok(v) => v,
+                        Err(_) => Vec::new(),
                     };
+                    info!("CHECK SPAN : {}", slug);
+                    let mut name = String::new();
+                    for s in spans.into_iter().take(20) {
+                        info!("span: {}", s.text().await.unwrap_or_default());
+                        if !s.text().await.unwrap_or_default().is_empty() && name.is_empty() {
+                            name = s.text().await.unwrap_or_default();
+                        }
+                    }
+                    // let name = match c.find(By::Css("div > div:nth-child(2) span:nth-child(1)")).await {
+                    //     Ok(el) => el.text().await.unwrap_or_default(),
+                    //     Err(_) => String::new(),
+                    // };
                     let price = match c
                         .find(By::Css("div > div:nth-child(2) > div:nth-child(2)"))
                         .await
@@ -331,10 +351,18 @@ async fn scrape_products(window: tauri::Window, queries: Vec<String>) -> Result<
                         Ok(el) => el.text().await.unwrap_or_default(),
                         Err(_) => String::new(),
                     };
+                    let location = match c
+                        .find(By::Css("div > div:nth-child(2) > div:nth-child(3) span:nth-child(2)"))
+                        .await
+                    {
+                        Ok(el) => el.text().await.unwrap_or_default(),
+                        Err(_) => String::new(),
+                    };
                     let photo = match c.find(By::Css("img[alt=\"product-image\"]")).await {
                         Ok(el) => el.attr("src").await.unwrap_or(None).unwrap_or_default(),
                         Err(_) => String::new(),
                     };
+                    
 
                     shop_slugs.insert(slug.to_string());
                     if !shop_display.is_empty() {
@@ -345,7 +373,7 @@ async fn scrape_products(window: tauri::Window, queries: Vec<String>) -> Result<
                         name,
                         price,
                         shop: shop_display.clone(),
-                        location: String::new(),
+                        location,
                         photo,
                         link: link.clone(),
                     };
@@ -365,6 +393,7 @@ async fn scrape_products(window: tauri::Window, queries: Vec<String>) -> Result<
         let shop_display = shop_names.get(&slug).cloned().unwrap_or_else(|| slug.clone());
 
         let mut qresults: Vec<QueryResult> = Vec::new();
+        
 
         for q in &queries {
             let mut products: Vec<Product> = Vec::new();
@@ -374,12 +403,11 @@ async fn scrape_products(window: tauri::Window, queries: Vec<String>) -> Result<
                 if let Some(v) = first_products_map.get(&slug) {
                     products = v.clone();
                 }
+                
             } else {
-
                 let shop_page = format!("https://www.tokopedia.com/{}", slug);
                 let _ = driver.goto(&shop_page).await;
-                
-              
+
                 // tunggu nama tokonya muncul
                 {
                     use std::time::Duration as StdDuration;
@@ -399,13 +427,9 @@ async fn scrape_products(window: tauri::Window, queries: Vec<String>) -> Result<
                             info!("Timed out waiting for shopNameHeader to load");
                             break;
                         }
-
-                        
-                        
                         tokio::time::sleep(std::time::Duration::from_millis(500)).await;
                     }
                 }
-
                 // wait products to load.
                 let mut used_input = false;
                 if perform_site_search(&driver, q).await.is_ok() {
@@ -486,12 +510,25 @@ async fn scrape_products(window: tauri::Window, queries: Vec<String>) -> Result<
                         link
                     };
 
-                    
-
-                    let name = match c.find(By::Css("div > div:nth-child(2) > div > span")).await {
-                        Ok(el) => el.text().await.unwrap_or_default(),
-                        Err(_) => String::new(),
+                    let spans = match c.find_all(By::Css("div:nth-child(1) > div:nth-child(2) > div:nth-child(1) span"))
+                        .await
+                    {
+                        Ok(v) => v,
+                        Err(_) => Vec::new(),
                     };
+                    info!("CHECK SPAN : {}", slug);
+                    let mut name = String::new();
+                    for s in spans.into_iter().take(20) {
+                        info!("span: {}", s.text().await.unwrap_or_default());
+                        if !s.text().await.unwrap_or_default().is_empty() && name.is_empty() {
+                            name = s.text().await.unwrap_or_default();
+                        }
+                    }
+
+                    // let name = match c.find(By::Css("div > div:nth-child(2) span:nth-child(1)")).await {
+                    //     Ok(el) => el.text().await.unwrap_or_default(),
+                    //     Err(_) => String::new(),
+                    // };
                     let price = match c
                         .find(By::Css("div > div:nth-child(2) > div:nth-child(2)"))
                         .await
@@ -500,7 +537,13 @@ async fn scrape_products(window: tauri::Window, queries: Vec<String>) -> Result<
                         Err(_) => String::new(),
                     };
                     let shop = shop_display.clone();
-                    let location = String::new();
+                    let location = match c
+                        .find(By::Css("div > div:nth-child(2) > div:nth-child(3) span:nth-child(2)"))
+                        .await
+                    {
+                        Ok(el) => el.text().await.unwrap_or_default(),
+                        Err(_) => String::new(),
+                    };
                     let photo = match c.find(By::Css("img[alt=\"product-image\"]")).await {
                         Ok(el) => el.attr("src").await.unwrap_or(None).unwrap_or_default(),
                         Err(_) => String::new(),
@@ -563,6 +606,101 @@ async fn open_chrome_with_driver() -> Result<(), String> {
     Ok(())
 }
 
+// New command to get Chrome and ChromeDriver versions
+#[tauri::command]
+async fn get_chrome_and_driver_info() -> Result<(String, String), String> {
+    // Get Chrome version
+    let chrome_version = get_chrome_version().map_err(|e| e.to_string())?;
+    
+    // Get ChromeDriver version by running chromedriver --version
+    use std::env;
+    use std::process::Command;
+    let local_app_data = env::var("LOCALAPPDATA").map_err(|e| e.to_string())?;
+    let driver_path = PathBuf::from(local_app_data)
+        .join("satu-toko")
+        .join("chromedriver")
+        .join("chromedriver.exe");
+    
+    if !driver_path.exists() {
+        return Err("ChromeDriver not found".to_string());
+    }
+    
+    let output = Command::new(driver_path)
+        .arg("--version")
+        .output()
+        .map_err(|e| format!("Failed to execute ChromeDriver: {}", e))?;
+    
+    let driver_version_output = String::from_utf8_lossy(&output.stdout);
+    let driver_version = driver_version_output
+        .split_whitespace()
+        .nth(1)
+        .unwrap_or("Unknown")
+        .to_string();
+    
+    Ok((chrome_version, driver_version))
+}
+
+// New command to re-download ChromeDriver
+#[tauri::command]
+async fn redownload_chromedriver() -> Result<String, String> {
+    use std::env;
+    use std::fs;
+    
+    // Remove existing ChromeDriver
+    let local_app_data = env::var("LOCALAPPDATA").map_err(|e| e.to_string())?;
+    let driver_dir = PathBuf::from(local_app_data)
+        .join("satu-toko")
+        .join("chromedriver");
+    
+    // Remove the directory if it exists
+    if driver_dir.exists() {
+        fs::remove_dir_all(&driver_dir).map_err(|e| format!("Failed to remove existing ChromeDriver: {}", e))?;
+    }
+    
+    // Re-download ChromeDriver
+    ensure_chromedriver().await
+}
+
+// New command to open browser with ChromeDriver
+#[tauri::command]
+async fn open_browser_with_driver() -> Result<(), String> {
+    use std::env;
+    use std::process::Command;
+    use std::thread;
+    use std::time::Duration;
+    
+    // Start ChromeDriver
+    let local_app_data = env::var("LOCALAPPDATA").map_err(|e| e.to_string())?;
+    let driver_path = PathBuf::from(local_app_data)
+        .join("satu-toko")
+        .join("chromedriver")
+        .join("chromedriver.exe");
+    
+    if !driver_path.exists() {
+        return Err("ChromeDriver not found".to_string());
+    }
+    
+    let driver_dir = driver_path.parent().ok_or("Invalid driver path")?;
+    
+    // Launch ChromeDriver in a separate thread
+    let _child = Command::new(&driver_path)
+        .arg("--port=9515")
+        .current_dir(driver_dir)
+        .spawn()
+        .map_err(|e| format!("Failed to start ChromeDriver: {}", e))?;
+    
+    // Give ChromeDriver time to start
+    thread::sleep(Duration::from_secs(2));
+    
+    // Open Chrome browser connected to ChromeDriver
+    let chrome_output = Command::new("chrome")
+        .arg("--remote-debugging-port=9222")
+        .spawn()
+        .map_err(|e| format!("Failed to start Chrome: {}", e))?;
+    
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -572,7 +710,10 @@ pub fn run() {
             greet,
             ensure_chromedriver,
             scrape_products,
-            open_chrome_with_driver
+            open_chrome_with_driver,
+            get_chrome_and_driver_info,  // Added new command
+            redownload_chromedriver,     // Added new command
+            open_browser_with_driver     // Added new command
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

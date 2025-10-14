@@ -8,6 +8,11 @@ function App() {
   const [input, setInput] = useState("");
   const [results, setResults] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [showDriverModal, setShowDriverModal] = useState(false);
+  const [chromeInfo, setChromeInfo] = useState({ chromeVersion: "", driverVersion: "" });
+  const [infoLoading, setInfoLoading] = useState(false);
+  const [expandedShops, setExpandedShops] = useState({}); // Track expanded shops
+  const [expandedQueries, setExpandedQueries] = useState({}); // Track expanded queries
   const inputRef = useRef(null);
   const listenersRef = useRef([]);
 
@@ -74,14 +79,69 @@ function App() {
     }
   }
 
-  async function onOpenDriver() {
+  async function loadChromeInfo() {
+    setInfoLoading(true);
     try {
-      await invoke("open_chrome_with_driver");
+      const [chromeVersion, driverVersion] = await invoke("get_chrome_and_driver_info");
+      setChromeInfo({ chromeVersion, driverVersion });
     } catch (e) {
       console.error(e);
-      alert("Failed to open driver folder: " + String(e));
+      alert("Failed to get Chrome/ChromeDriver info: " + String(e));
+    } finally {
+      setInfoLoading(false);
     }
   }
+
+  async function onOpenDriver() {
+    // Show modal instead of opening folder directly
+    setShowDriverModal(true);
+    loadChromeInfo();
+  }
+
+  async function onReDownload() {
+    try {
+      setInfoLoading(true);
+      await invoke("redownload_chromedriver");
+      alert("ChromeDriver re-downloaded successfully!");
+      loadChromeInfo(); // Refresh the version info
+    } catch (e) {
+      console.error(e);
+      alert("Failed to re-download ChromeDriver: " + String(e));
+    } finally {
+      setInfoLoading(false);
+    }
+  }
+
+  async function onOpenBrowser() {
+    try {
+      await invoke("open_browser_with_driver");
+      alert("Browser opened with ChromeDriver!");
+    } catch (e) {
+      console.error(e);
+      alert("Failed to open browser: " + String(e));
+    }
+  }
+
+  function closeModal() {
+    setShowDriverModal(false);
+  }
+
+  // Function to toggle shop expansion
+  const toggleShop = (shopIndex) => {
+    setExpandedShops(prev => ({
+      ...prev,
+      [shopIndex]: !prev[shopIndex]
+    }));
+  };
+
+  // Function to toggle query expansion
+  const toggleQuery = (shopIndex, queryIndex) => {
+    const key = `${shopIndex}-${queryIndex}`;
+    setExpandedQueries(prev => ({
+      ...prev,
+      [key]: !prev[key]
+    }));
+  };
 
   return (
     <div className="min-h-screen flex items-center justify-center p-4 w-full">
@@ -92,6 +152,54 @@ function App() {
             <button onClick={onOpenDriver} className="px-3 py-1 bg-gray-200 rounded">Open Driver</button>
           </div>
         </div>
+
+        {/* Driver Info Modal */}
+        {showDriverModal && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+            <div className="bg-white rounded-lg p-6 w-96">
+              <div className="flex justify-between items-center mb-4">
+                <h3 className="text-lg font-semibold">Chrome Driver Information</h3>
+                <button onClick={closeModal} className="text-gray-500 hover:text-gray-700">
+                  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"></path>
+                  </svg>
+                </button>
+              </div>
+
+              {infoLoading ? (
+                <p>Loading...</p>
+              ) : (
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700">Chrome Version</label>
+                    <div className="mt-1 p-2 bg-gray-100 rounded">{chromeInfo.chromeVersion || "Not detected"}</div>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700">ChromeDriver Version</label>
+                    <div className="mt-1 p-2 bg-gray-100 rounded">{chromeInfo.driverVersion || "Not downloaded"}</div>
+                  </div>
+                </div>
+              )}
+
+              <div className="mt-6 flex justify-between">
+                <button
+                  onClick={onReDownload}
+                  disabled={infoLoading}
+                  className="px-4 py-2 bg-red-600 text-white rounded disabled:opacity-50"
+                >
+                  Re-download
+                </button>
+                <button
+                  onClick={onOpenBrowser}
+                  disabled={infoLoading}
+                  className="px-4 py-2 bg-blue-600 text-white rounded disabled:opacity-50"
+                >
+                  Open Chrome
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         <div className="mt-4">
           <label className="block text-sm text-gray-600">Nama produk (bisa lebih dari satu)</label>
@@ -134,61 +242,116 @@ function App() {
             {results.map((shop, sIdx) => {
               // determine if this shop has products for every query
               const allFound = shop.results && shop.results.length > 0 && shop.results.every(r => (r.products && r.products.length > 0));
+              const isShopExpanded = expandedShops[sIdx] || false;
+
               return (
-                <div key={sIdx} className={"shop-block " + (allFound ? "shop-highlight" : "")}>
-                  <div className="shop-header flex items-center justify-between">
-                    <div>
-                      <a href={shop.shop_url} target="_blank" rel="noreferrer" className="shop-name">{shop.shop_name}</a>
-                      <div className="shop-subtitle text-sm text-gray-500">{shop.shop_url}</div>
-                    </div>
+                <div key={sIdx} className="expandable-container">
+                  <div
+                    className="expandable-header"
+                    onClick={() => toggleShop(sIdx)}
+                  >
+                    <h4 className="shop-name">
+                      {shop.shop_name} ({shop.results ? shop.results.length : 0} queries)
+                    </h4>
                     <div className="flex items-center gap-3">
-                      <div className="shop-count text-sm text-gray-600">{shop.results ? shop.results.length : 0} query</div>
                       {allFound && <div className="badge bg-green-100 text-green-800 text-sm px-2 py-1 rounded">Semua produk ditemukan</div>}
+                      <svg className={`expandable-icon ${isShopExpanded ? 'rotated' : ''}`}
+                        width="16"
+                        height="16"
+                        fill="currentColor"
+                        viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg">
+                        <path d="M6 8L2 8L2 6L8 5.24536e-07L14 6L14 8L10 8L10 16L6 16L6 8Z" fill="#000000" />
+                      </svg>
                     </div>
                   </div>
-                  <div className="shop-queries mt-2">
-                    {shop.results.map((qr, qIdx) => (
-                      <div key={qIdx} className="query-block">
-                        <div className="query-title flex items-center gap-3">
-                          <div className="query-label text-sm text-gray-600">Hasil untuk:</div>
-                          <div className="query-pill text-sm font-medium bg-gray-100 px-2 py-1 rounded">{qr.query}</div>
-                          <div className="query-count text-sm text-gray-500">({qr.products ? qr.products.length : 0})</div>
-                        </div>
-                        <div className="mt-2">
-                          {(!qr.products || qr.products.length === 0) && <div className="text-sm text-gray-500">Tidak ada hasil</div>}
-                          {qr.products && qr.products.length > 0 && (
-                            <div className="products-grid">
-                              {qr.products.map((p, pIdx) => {
-                                const img = p.photo || p.image || p.thumbnail || (p.photos && p.photos[0]) || null;
-                                return (
-                                  <div key={pIdx} className="product-card">
-                                    <a href={p.link} target="_blank" rel="noreferrer" className="product-link">
-                                      <div className="product-image-wrap">
-                                        {img ? (
-                                          <img src={img} alt={p.name || 'product'} className="product-image" />
-                                        ) : (
-                                          <div className="product-image product-image--placeholder">No image</div>
-                                        )}
-                                      </div>
-                                      <div className="product-body">
-                                        <div className="product-name">{p.name || p.link}</div>
-                                        {p.price && <div className="product-price">{p.price}</div>}
-                                      </div>
-                                    </a>
-                                  </div>
-                                );
-                              })}
-                            </div>
-                          )}
-                        </div>
+
+                  <div className={`expandable-content ${isShopExpanded ? 'expanded' : 'collapsed'}`}>
+                    <div className="shop-details">
+                      <div className="mb-2">
+                        <a href={shop.shop_url} target="_blank" rel="noreferrer" className="text-blue-600 text-sm hover:underline">
+                          {shop.shop_url}
+                        </a>
                       </div>
-                    ))}
+
+                      {shop.results && shop.results.map((qr, qIdx) => {
+                        const key = `${sIdx}-${qIdx}`;
+                        const isQueryExpanded = expandedQueries[key] || false;
+                        const hasProducts = qr.products && qr.products.length > 0;
+
+                        return (
+                          <div key={qIdx} className="query-item">
+                            <div
+                              className="query-summary"
+                              onClick={() => toggleQuery(sIdx, qIdx)}
+                            >
+                              <div className="flex items-center gap-2">
+                                <span className="query-pill text-sm">{qr.query}</span>
+                                <span className="query-count text-sm text-gray-500">
+                                  ({qr.products ? qr.products.length : 0} products)
+                                </span>
+                              </div>
+                              <svg
+                                className={`expandable-icon ${isQueryExpanded ? 'rotated' : ''}`}
+                                width="12"
+                                height="12"
+                                fill="currentColor"
+                                viewBox="0 0 16 16"
+                              >
+                                <path d="M6 8L2 8L2 6L8 5.24536e-07L14 6L14 8L10 8L10 16L6 16L6 8Z" fill="#000000" />
+                              </svg>
+                            </div>
+
+                            {isQueryExpanded && (
+                              <div className="query-products">
+                                {!hasProducts ? (
+                                  <p className="no-results">Tidak ada hasil</p>
+                                ) : (
+                                  <div className="product-list">
+                                    {qr.products.map((p, pIdx) => {
+                                      const img = p.photo || p.image || p.thumbnail || (p.photos && p.photos[0]) || null;
+                                      return (
+                                        <div key={pIdx} className="product-item">
+                                          {img ? (
+                                            <img
+                                              src={img}
+                                              alt={p.name || 'product'}
+                                              className="product-image-thumb"
+                                            />
+                                          ) : (
+                                            <div className="product-image-thumb bg-gray-200 flex items-center justify-center text-xs text-gray-500">
+                                              No Image
+                                            </div>
+                                          )}
+                                          <div className="product-info">
+                                            <div className="product-title">{p.name || p.link}</div>
+                                            {p.price && <div className="product-price text-green-600 text-sm">{p.price}</div>}
+                                            <a
+                                              href={p.link}
+                                              target="_blank"
+                                              rel="noreferrer"
+                                              className="product-link-text"
+                                            >
+                                              View Product
+                                            </a>
+                                          </div>
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
                   </div>
                 </div>
               );
             })}
           </div>
         </div>
+
       </div>
     </div>
   );
