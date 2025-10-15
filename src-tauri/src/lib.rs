@@ -58,7 +58,44 @@ async fn ensure_chromedriver() -> Result<String, String> {
         chrome_version = prefix;
     }
 
-    // 2) Fetch chrome-for-testing JSON
+    use std::process::Command;
+
+    // 2) If we already have chromedriver, check its version and avoid re-downloading
+    let executable_name = if cfg!(target_os = "windows") {
+        "chromedriver.exe"
+    } else {
+        "chromedriver"
+    };
+    let existing_driver_path = driver_dir.join(executable_name);
+    if existing_driver_path.exists() {
+        // Try to run `chromedriver --version` and compare major version with Chrome
+        if let Ok(output) = Command::new(&existing_driver_path).arg("--version").output() {
+            if output.status.success() {
+                let out_str = String::from_utf8_lossy(&output.stdout).to_string();
+                // expected: "ChromeDriver 116.0.5845.96 (...)" -> take the second token
+                if let Some(driver_ver) = out_str.split_whitespace().nth(1) {
+                    let driver_major = driver_ver.split('.').next().unwrap_or(driver_ver);
+                    let chrome_major = chrome_version.split('.').next().unwrap_or(&chrome_version);
+                    if driver_major == chrome_major {
+                        info!("Found existing chromedriver with matching major version: {}", driver_ver);
+                        return Ok(existing_driver_path.to_string_lossy().to_string());
+                    } else {
+                        info!("Existing chromedriver major {} != chrome major {} -> will re-download", driver_major, chrome_major);
+                        // attempt to remove mismatched driver to ensure fresh install
+                        let _ = std::fs::remove_file(&existing_driver_path);
+                    }
+                }
+            } else {
+                info!("Existing chromedriver found but --version returned non-zero -> re-download");
+                let _ = std::fs::remove_file(&existing_driver_path);
+            }
+        } else {
+            info!("Failed to execute existing chromedriver -> re-download");
+            let _ = std::fs::remove_file(&existing_driver_path);
+        }
+    }
+
+    // 3) Fetch chrome-for-testing JSON
     let client = Client::new();
     let json_url = "https://googlechromelabs.github.io/chrome-for-testing/known-good-versions-with-downloads.json";
     let resp = client
@@ -92,10 +129,12 @@ async fn ensure_chromedriver() -> Result<String, String> {
     let platform_name = if cfg!(target_os = "windows") {
         "win64"
     } else if cfg!(target_os = "macos") {
-        "mac-x64"
+        "mac-arm64"
     } else {
         "linux64"
     };
+
+    info!("Platform: {}", platform_name);
 
     let downloads = chosen["downloads"]["chromedriver"]
         .as_array()
@@ -110,6 +149,7 @@ async fn ensure_chromedriver() -> Result<String, String> {
         }
     }
     let url = url.ok_or(format!("no {} chromedriver in JSON", platform_name))?;
+    info!("URL: {}", url);
 
     // Download zip
     let bytes = client
