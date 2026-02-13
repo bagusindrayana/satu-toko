@@ -17,6 +17,7 @@ function App() {
   const [expandedShops, setExpandedShops] = useState({}); // Track expanded shops
   const [expandedQueries, setExpandedQueries] = useState({}); // Track expanded queries
   const [selectedPlatform, setSelectedPlatform] = useState("tokopedia"); // Default to tokopedia
+  const [showCopyNotification, setShowCopyNotification] = useState(false); // Track copy notification
   const inputRef = useRef(null);
   const listenersRef = useRef([]);
 
@@ -166,15 +167,31 @@ function App() {
     }));
   };
 
+  // Function to handle copy to clipboard
+  const handleCopyLink = async (e, url) => {
+    e.preventDefault();
+    try {
+      await navigator.clipboard.writeText(url);
+      setShowCopyNotification(true);
+      setTimeout(() => {
+        setShowCopyNotification(false);
+      }, 2000); // Hide notification after 2 seconds
+    } catch (err) {
+      console.error('Failed to copy:', err);
+      alert('Gagal menyalin link');
+    }
+  };
+
   return (
-    <div className="min-h-screen flex items-center justify-center p-4 w-full">
-      <div className="card">
-        <div className="flex justify-between items-start">
-          <h2 className="text-xl font-semibold">Satu Toko — Scraper</h2>
-          <div>
+    <div className="app-container">
+      <div className="app-window">
+        {/* Title Bar */}
+        <div className="title-bar">
+          <div className="title-bar-content">
+            <h1 className="app-title">Satu Toko — Scraper</h1>
             <button
               onClick={onOpenDriver}
-              className="px-3 py-1 bg-gray-200 rounded"
+              className="btn-secondary"
             >
               Open Driver
             </button>
@@ -183,85 +200,69 @@ function App() {
 
         {/* Driver Info Modal */}
         {showDriverModal && (
-          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-            <div className="bg-white rounded-lg p-6 w-96">
-              <div className="flex justify-between items-center mb-4">
-                <h3 className="text-lg font-semibold">
-                  Chrome Driver Information
-                </h3>
+          <div className="modal-overlay">
+            <div className="modal-window">
+              <div className="modal-header">
+                <h3 className="modal-title">Chrome Driver Information</h3>
                 <button
                   onClick={closeModal}
-                  className="text-gray-500 hover:text-gray-700"
+                  className="btn-close"
                 >
-                  <svg
-                    className="w-6 h-6"
-                    fill="none"
-                    stroke="currentColor"
-                    viewBox="0 0 24 24"
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth="2"
-                      d="M6 18L18 6M6 6l12 12"
-                    ></path>
-                  </svg>
+                  ×
                 </button>
               </div>
 
-              {infoLoading ? (
-                <p>Loading...</p>
-              ) : (
-                <div className="space-y-4">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700">
-                      Chrome Version
-                    </label>
-                    <div className="mt-1 p-2 bg-gray-100 rounded">
-                      {chromeInfo.chromeVersion || "Not detected"}
+              <div className="modal-body">
+                {infoLoading ? (
+                  <div className="loading-state">
+                    <p>Loading...</p>
+                  </div>
+                ) : (
+                  <div className="info-grid">
+                    <div className="info-item">
+                      <label className="info-label">Chrome Version</label>
+                      <div className="info-value">
+                        {chromeInfo.chromeVersion || "Not detected"}
+                      </div>
+                    </div>
+                    <div className="info-item">
+                      <label className="info-label">ChromeDriver Version</label>
+                      <div className="info-value">
+                        {chromeInfo.driverVersion || "Not downloaded"}
+                      </div>
                     </div>
                   </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700">
-                      ChromeDriver Version
-                    </label>
-                    <div className="mt-1 p-2 bg-gray-100 rounded">
-                      {chromeInfo.driverVersion || "Not downloaded"}
-                    </div>
-                  </div>
-                </div>
-              )}
+                )}
 
-              <div className="mt-6 flex justify-between">
-                <button
-                  onClick={onOpenShopee}
-                  disabled={infoLoading}
-                  className="px-4 py-2 bg-orange-600 text-white rounded disabled:opacity-50"
-                >
-                  Open Shopee
-                </button>
-                <button
-                  onClick={onOpenTokopedia}
-                  disabled={infoLoading}
-                  className="px-4 py-2 bg-blue-600 text-white rounded disabled:opacity-50"
-                >
-                  Open Tokopedia
-                </button>
+                <div className="modal-actions">
+                  <button
+                    onClick={onOpenShopee}
+                    disabled={infoLoading}
+                    className="btn-primary"
+                  >
+                    Open Shopee
+                  </button>
+                  <button
+                    onClick={onOpenTokopedia}
+                    disabled={infoLoading}
+                    className="btn-primary"
+                  >
+                    Open Tokopedia
+                  </button>
+                </div>
               </div>
             </div>
           </div>
         )}
 
-        <div className="mt-4">
-          <label className="block text-sm text-gray-600">
-            Nama produk (bisa lebih dari satu)
-          </label>
-          <div className="mt-2">
-            <div className="flex flex-wrap items-center">
+        <div className="content-section">
+          <div className="form-group">
+            <label className="form-label">Nama produk (bisa lebih dari satu)</label>
+            <div className="tag-input">
               {tags.map((t, i) => (
                 <span key={i} className="tag">
                   {t}
-                  <button onClick={() => removeTag(i)} className="ml-2">
+                  <button onClick={() => removeTag(i)} className="tag-remove">
                     ×
                   </button>
                 </span>
@@ -282,38 +283,53 @@ function App() {
                     removeTag(tags.length - 1);
                   }
                 }}
-                placeholder="Ketik lalu tekan Enter atau koma"
-                className="flex-1 p-2 outline-none"
+                placeholder="Ketik nama produk lalu tekan Enter atau koma"
+                className="tag-input-field"
               />
             </div>
           </div>
 
-          <div className="mt-4 flex flex-col sm:flex-row gap-4">
-            <div>
-              <label className="block text-sm text-gray-600">Platform</label>
+          <div className="form-row">
+            <div className="form-group">
+              <label className="form-label">Platform</label>
               <select
                 value={selectedPlatform}
                 onChange={(e) => setSelectedPlatform(e.target.value)}
-                className="mt-1 p-2 border rounded"
+                className="form-select"
               >
                 <option value="tokopedia">Tokopedia</option>
                 <option value="shopee">Shopee</option>
               </select>
             </div>
-            <div>
+            <div className="form-group">
               <button
                 onClick={onSearch}
-                className="mt-5 sm:mt-6 px-4 py-2 bg-blue-600 text-white rounded"
+                disabled={tags.length === 0}
+                className="btn-primary btn-search"
               >
-                Cari
+                Cari Produk
               </button>
             </div>
           </div>
+
+          {/* Shopee Warning */}
+          {selectedPlatform === "shopee" && (
+            <div className="warning-box">
+              <div className="warning-icon">⚠</div>
+              <div className="warning-content">
+                <strong>Perhatian untuk Platform Shopee</strong>
+                <p>
+                  Untuk menggunakan Shopee, Anda harus login terlebih dahulu.
+                  Klik tombol "Open Driver" di pojok kanan atas, lalu pilih "Open Shopee" untuk melakukan login.
+                </p>
+              </div>
+            </div>
+          )}
         </div>
 
-        <div className="mt-6">
-          <h3 className="text-lg font-medium">Hasil</h3>
-          <div className="mt-3">
+        <div className="content-section">
+          <h3 className="section-title">Hasil Pencarian</h3>
+          <div>
             {loading && (
               <p className="text-sm text-gray-500">
                 Mencari... tunggu sebentar
@@ -373,6 +389,7 @@ function App() {
                           target="_blank"
                           rel="noreferrer"
                           className="text-blue-600 text-sm hover:underline"
+                          onClick={(e) => handleCopyLink(e, shop.shop_url)}
                         >
                           {shop.shop_url}
                         </a>
@@ -459,6 +476,7 @@ function App() {
                                                 target="_blank"
                                                 rel="noreferrer"
                                                 className="product-link-text"
+                                                onClick={(e) => handleCopyLink(e, p.link)}
                                               >
                                                 View Product
                                               </a>
@@ -481,6 +499,13 @@ function App() {
           </div>
         </div>
       </div>
+
+      {/* Copy Notification Popup */}
+      {showCopyNotification && (
+        <div className="notification">
+          ✓ Link berhasil disalin!
+        </div>
+      )}
     </div>
   );
 }
