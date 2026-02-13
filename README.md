@@ -9,5 +9,10 @@ This template should help get you started developing with Tauri and React in Vit
 ## Satu Toko Scraper
 
 - Chromedriver will be stored in %LOCALAPPDATA%/satu-toko/chromedriver on Windows.
-- To run locally: install dependencies (`npm install`), then `npm run dev` and `npm run tauri dev` in separate terminals.
-- This is a proof-of-concept; Tokopedia selectors, rate limits, and anti-bot measures may require additional handling.
+- To run locally: install dependencies (`npm install`), then `npm run build` and `npm run tauri dev`.
+
+
+## Support Marketplaces
+- [x] Tokopedia
+- [x] Shopee (need login)
+
