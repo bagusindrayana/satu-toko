@@ -13,6 +13,7 @@ function App() {
   const [infoLoading, setInfoLoading] = useState(false);
   const [expandedShops, setExpandedShops] = useState({}); // Track expanded shops
   const [expandedQueries, setExpandedQueries] = useState({}); // Track expanded queries
+  const [selectedPlatform, setSelectedPlatform] = useState("tokopedia"); // Default to tokopedia
   const inputRef = useRef(null);
   const listenersRef = useRef([]);
 
@@ -69,7 +70,7 @@ function App() {
     setLoading(true);
     try {
       // invoke backend
-      const res = await invoke("scrape_products", { queries: tags });
+      const res = await invoke("scrape_products", { queries: tags, platform: selectedPlatform });
       setResults(res);
       setLoading(false);
     } catch (e) {
@@ -229,8 +230,21 @@ function App() {
             </div>
           </div>
 
-          <div className="mt-4">
-            <button onClick={onSearch} className="px-4 py-2 bg-blue-600 text-white rounded">Cari</button>
+          <div className="mt-4 flex flex-col sm:flex-row gap-4">
+            <div>
+              <label className="block text-sm text-gray-600">Platform</label>
+              <select
+                value={selectedPlatform}
+                onChange={(e) => setSelectedPlatform(e.target.value)}
+                className="mt-1 p-2 border rounded"
+              >
+                <option value="tokopedia">Tokopedia</option>
+                <option value="shopee">Shopee</option>
+              </select>
+            </div>
+            <div>
+              <button onClick={onSearch} className="mt-5 sm:mt-6 px-4 py-2 bg-blue-600 text-white rounded">Cari</button>
+            </div>
           </div>
         </div>
 
@@ -251,7 +265,7 @@ function App() {
                     onClick={() => toggleShop(sIdx)}
                   >
                     <h4 className="shop-name">
-                      {shop.shop_name} ({shop.results ? shop.results.length : 0} queries)
+                      {shop.shop_name} - {shop.platform === 'tokopedia' ? 'Tokopedia' : 'Shopee'} ({shop.results ? shop.results.length : 0} queries)
                     </h4>
                     <div className="flex items-center gap-3">
                       {allFound && <div className="badge bg-green-100 text-green-800 text-sm px-2 py-1 rounded">Semua produk ditemukan</div>}

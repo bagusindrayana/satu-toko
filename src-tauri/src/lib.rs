@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use tauri::Manager;
 use tauri::Emitter;
 use std::path::PathBuf;
+use undetected_chromedriver::chrome;
 
 #[tauri::command]
 fn greet(name: &str) -> String {
@@ -30,6 +31,7 @@ pub struct QueryResult {
 pub struct ShopResults {
     pub shop_name: String,
     pub shop_url: String,
+    pub platform: String,  // Add platform field
     pub results: Vec<QueryResult>,
 }
 
@@ -390,7 +392,7 @@ fn get_chrome_version() -> Result<String, anyhow::Error> {
 }
 
 #[tauri::command]
-async fn scrape_products(window: tauri::Window, queries: Vec<String>) -> Result<Vec<ShopResults>, String> {
+async fn scrape_products(window: tauri::Window, queries: Vec<String>, platform: String) -> Result<Vec<ShopResults>, String> {
     use std::env;
     use std::path::PathBuf;
     use thirtyfour::prelude::*;
@@ -426,8 +428,8 @@ async fn scrape_products(window: tauri::Window, queries: Vec<String>) -> Result<
 
     let first_query = &queries[0];
 
-
-    async fn perform_site_search(driver: &WebDriver, query: &str) -> Result<(), ()> {
+    // Platform-specific functions
+    async fn perform_tokopedia_search(driver: &WebDriver, query: &str) -> Result<(), ()> {
         // Cari input
         let sel = r#"input[data-unify="Search"][type="search"]"#;
         if let Ok(el) = driver.find(By::Css(sel)).await {
@@ -442,29 +444,94 @@ async fn scrape_products(window: tauri::Window, queries: Vec<String>) -> Result<
         }
         Err(())
     }
-
-    let _ = driver.goto("https://www.tokopedia.com/").await;
-
-    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-
-    // coba cari dengan input
-    if perform_site_search(&driver, first_query).await.is_err() {
-        let first_url = format!(
-            "https://www.tokopedia.com/search?q={}",
-            urlencoding::encode(first_query)
-        );
-        let _ = driver.goto(&first_url).await;
-        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-    } else {
-        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+    
+    async fn perform_shopee_search(driver: &WebDriver, query: &str) -> Result<(), ()> {
+        // Cari input pada Shopee
+        let sel = r#"input[type=\"text\"][class*=\"shopee-search-input__input\"]"#;
+        if let Ok(el) = driver.find(By::Css(sel)).await {
+            if el.is_displayed().await.unwrap_or(false) {
+                let _ = el.click().await;
+                let _ = el.clear().await;
+                let _ = el.send_keys(query).await;
+                // Submit using enter key
+                let _ = el.send_keys("\n").await;
+                return Ok(());
+            }
+        }
+        Err(())
     }
 
-    let first_cards = match driver
-        .find_all(By::Css("div[data-ssr=\"contentProductsSRPSSR\"] a"))
-        .await
-    {
-        Ok(v) => v,
-        Err(_) => Vec::new(),
+    // Navigate based on platform
+    match platform.as_str() {
+        "tokopedia" => {
+            let _ = driver.goto("https://www.tokopedia.com/").await;
+            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+
+            // coba cari dengan input
+            if perform_tokopedia_search(&driver, first_query).await.is_err() {
+                let first_url = format!(
+                    "https://www.tokopedia.com/search?q={}",
+                    urlencoding::encode(first_query)
+                );
+                let _ = driver.goto(&first_url).await;
+                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+            } else {
+                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+            }
+        },
+        "shopee" => {
+            let _ = driver.goto("https://shopee.co.id/").await;
+            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+
+            // coba cari dengan input
+            if perform_shopee_search(&driver, first_query).await.is_err() {
+                let first_url = format!(
+                    "https://shopee.co.id/search?keyword={}",
+                    urlencoding::encode(first_query)
+                );
+                let _ = driver.goto(&first_url).await;
+                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+            } else {
+                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+            }
+        },
+        _ => {
+            let _ = driver.goto("https://www.tokopedia.com/").await;
+            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+
+            if perform_tokopedia_search(&driver, first_query).await.is_err() {
+                let first_url = format!(
+                    "https://www.tokopedia.com/search?q={}",
+                    urlencoding::encode(first_query)
+                );
+                let _ = driver.goto(&first_url).await;
+                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+            } else {
+                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+            }
+        }
+    }
+
+    // Get first cards based on platform
+    let first_cards = match platform.as_str() {
+        "shopee" => {
+            match driver
+                .find_all(By::Css(".shopee-search-item-result__item a"))
+                .await
+            {
+                Ok(v) => v,
+                Err(_) => Vec::new(),
+            }
+        },
+        _ => { // Default to tokopedia
+            match driver
+                .find_all(By::Css("div[data-ssr=\"contentProductsSRPSSR\"] a"))
+                .await
+            {
+                Ok(v) => v,
+                Err(_) => Vec::new(),
+            }
+        }
     };
 
     use std::collections::HashSet;
@@ -477,90 +544,188 @@ async fn scrape_products(window: tauri::Window, queries: Vec<String>) -> Result<
             Ok(opt) => opt.unwrap_or_default(),
             Err(_) => String::new(),
         };
-        if link.contains("/product?perpage=") {
-            continue;
-        }
-        let link = if link.starts_with("//") {
-            format!("https:{}", link)
-        } else if link.starts_with('/') {
-            format!("https://www.tokopedia.com{}", link)
-        } else {
-            link
-        };
-
-        let marker = "https://www.tokopedia.com/";
-        if let Some(rest) = link.strip_prefix(marker) {
-            if let Some((slug, _)) = rest.split_once('/') {
-                if !slug.is_empty() {
-
-                    let spans = match c.find_all(By::Css("div:nth-child(1) > div:nth-child(2) > div:nth-child(1) span"))
-                        .await
-                    {
-                        Ok(v) => v,
-                        Err(_) => Vec::new(),
-                    };
-                    info!("CHECK SPAN : {}", slug);
-                    let mut name = String::new();
-                    for s in spans.into_iter().take(20) {
-                        info!("span: {}", s.text().await.unwrap_or_default());
-                        if !s.text().await.unwrap_or_default().is_empty() && name.is_empty() {
-                            name = s.text().await.unwrap_or_default();
-                        }
-                    }
-                    // let name = match c.find(By::Css("div > div:nth-child(2) span:nth-child(1)")).await {
-                    //     Ok(el) => el.text().await.unwrap_or_default(),
-                    //     Err(_) => String::new(),
-                    // };
-                    let price = match c
-                        .find(By::Css("div > div:nth-child(2) > div:nth-child(2)"))
-                        .await
-                    {
+        
+        let (product, shop_slug) = match platform.as_str() {
+            "shopee" => {
+                // Handle Shopee product extraction
+                if link.starts_with("/") {
+                    let full_link = format!("https://shopee.co.id{}", link);
+                    
+                    // Extract product name
+                    let name = match c.find(By::Css(".line-clamp-2.break-words")).await {
                         Ok(el) => el.text().await.unwrap_or_default(),
-                        Err(_) => String::new(),
-                    };
-                    let shop_display = match c.find(By::Css("span.flip")).await {
-                        Ok(el) => el.text().await.unwrap_or_default(),
-                        Err(_) => String::new(),
-                    };
-                    let location = match c
-                        .find(By::Css("div > div:nth-child(2) > div:nth-child(3) span:nth-child(2)"))
-                        .await
-                    {
-                        Ok(el) => el.text().await.unwrap_or_default(),
-                        Err(_) => String::new(),
-                    };
-                    let photo = match c.find(By::Css("img[alt=\"product-image\"]")).await {
-                        Ok(el) => el.attr("src").await.unwrap_or(None).unwrap_or_default(),
                         Err(_) => String::new(),
                     };
                     
-
-                    shop_slugs.insert(slug.to_string());
-                    if !shop_display.is_empty() {
-                        shop_names.insert(slug.to_string(), shop_display.clone());
-                    }
-
-                    let prod = Product {
+                    // Extract price - Shopee has a specific structure for prices
+                    let price = {
+                        let price_element = match c.find(By::Css("[data-testid=\"a11y-label\"] + div .truncate.text-base\\/5.font-medium")).await {
+                            Ok(el) => el,
+                            Err(_) => {
+                                // Alternative selector for price
+                                match c.find(By::Css(".text-shopee-primary .truncate.text-base\\/5.font-medium")).await {
+                                    Ok(el) => el,
+                                    Err(_) => {
+                                        // Try another approach
+                                        match c.find(By::Css(".flex-shrink.min-w-0.mr-1.truncate.text-shopee-primary .truncate.text-base\\/5.font-medium")).await {
+                                            Ok(el) => el,
+                                            Err(_) => {
+                                                // If all else fails, return empty string
+                                                continue; // Skip this item
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        };
+                        price_element.text().await.unwrap_or_default()
+                    };
+                    
+                    // Extract shop name - for Shopee, we'll use a generic identifier
+                    let shop = "Shopee Official Store".to_string();
+                    
+                    // Extract location
+                    let location = match c.find(By::Css(".text-shopee-black54.font-extralight.text-sp10 .align-middle")).await {
+                        Ok(el) => el.text().await.unwrap_or_default(),
+                        Err(_) => String::new(),
+                    };
+                    
+                    // Extract photo
+                    let photo = match c.find(By::Css("img[alt=\"product-image\"], img[src*='simg'], img[src*='shopee']"))
+                        .await {
+                        Ok(el) => el.attr("src").await.unwrap_or(None).unwrap_or_default(),
+                        Err(_) => {
+                            // Try to get the first image in the product card
+                            match c.find(By::Css("img"))
+                                .await {
+                                Ok(el) => el.attr("src").await.unwrap_or(None).unwrap_or_default(),
+                                Err(_) => String::new(),
+                            }
+                        }
+                    };
+                    
+                    // For Shopee, we'll use a generic shop identifier since shop slug is harder to extract from search results
+                    let shop_slug = "shopee".to_string();
+                    
+                    let product = Product {
                         name,
-                        price,
-                        shop: shop_display.clone(),
+                        price: format!("Rp{}", price), // Add currency prefix
+                        shop,
                         location,
                         photo,
-                        link: link.clone(),
+                        link: full_link,
                     };
-                    first_products_map
-                        .entry(slug.to_string())
-                        .or_insert_with(Vec::new)
-                        .push(prod);
+                    
+                    (product, shop_slug)
+                } else {
+                    continue; // Skip if not a relative link
                 }
+            },
+            _ => { // Default to Tokopedia
+                if link.contains("/product?perpage=") {
+                    continue;
+                }
+                let link = if link.starts_with("//") {
+                    format!("https:{}", link)
+                } else if link.starts_with('/') {
+                    format!("https://www.tokopedia.com{}", link)
+                } else {
+                    link
+                };
+
+                let marker = "https://www.tokopedia.com/";
+                if let Some(rest) = link.strip_prefix(marker) {
+                    if let Some((slug, _)) = rest.split_once('/') {
+                        if !slug.is_empty() {
+
+                            let spans = match c.find_all(By::Css("div:nth-child(1) > div:nth-child(2) > div:nth-child(1) span"))
+                                .await
+                            {
+                                Ok(v) => v,
+                                Err(_) => Vec::new(),
+                            };
+                            info!("CHECK SPAN : {}", slug);
+                            let mut name = String::new();
+                            for s in spans.into_iter().take(20) {
+                                info!("span: {}", s.text().await.unwrap_or_default());
+                                if !s.text().await.unwrap_or_default().is_empty() && name.is_empty() {
+                                    name = s.text().await.unwrap_or_default();
+                                }
+                            }
+                            // let name = match c.find(By::Css("div > div:nth-child(2) span:nth-child(1)")).await {
+                            //     Ok(el) => el.text().await.unwrap_or_default(),
+                            //     Err(_) => String::new(),
+                            // };
+                            let price = match c
+                                .find(By::Css("div > div:nth-child(2) > div:nth-child(2)"))
+                                .await
+                            {
+                                Ok(el) => el.text().await.unwrap_or_default(),
+                                Err(_) => String::new(),
+                            };
+                            let shop_display = match c.find(By::Css("span.flip")).await {
+                                Ok(el) => el.text().await.unwrap_or_default(),
+                                Err(_) => String::new(),
+                            };
+                            let location = match c
+                                .find(By::Css("div > div:nth-child(2) > div:nth-child(3) span:nth-child(2)"))
+                                .await
+                            {
+                                Ok(el) => el.text().await.unwrap_or_default(),
+                                Err(_) => String::new(),
+                            };
+                            let photo = match c.find(By::Css("img[alt=\"product-image\"]")).await {
+                                Ok(el) => el.attr("src").await.unwrap_or(None).unwrap_or_default(),
+                                Err(_) => String::new(),
+                            };
+                            
+
+                            shop_slugs.insert(slug.to_string());
+                            if !shop_display.is_empty() {
+                                shop_names.insert(slug.to_string(), shop_display.clone());
+                            }
+
+                            let prod = Product {
+                                name,
+                                price,
+                                shop: shop_display.clone(),
+                                location,
+                                photo,
+                                link: link.clone(),
+                            };
+                            first_products_map
+                                .entry(slug.to_string())
+                                .or_insert_with(Vec::new)
+                                .push(prod);
+                            
+                            continue; // Skip to next iteration for Tokopedia
+                        }
+                    }
+                }
+                continue; // Skip if not a valid Tokopedia link
             }
+        };
+        
+        // For Shopee, we add the product to the map
+        shop_slugs.insert(shop_slug.clone());
+        if !product.shop.is_empty() {
+            shop_names.insert(shop_slug.clone(), product.shop.clone());
         }
+        
+        first_products_map
+            .entry(shop_slug.clone())
+            .or_insert_with(Vec::new)
+            .push(product);
     }
 
     let mut grouped: Vec<ShopResults> = Vec::new();
 
     for slug in shop_slugs.into_iter() {
-        let shop_url = format!("https://www.tokopedia.com/{}", slug);
+        let shop_url = if platform == "shopee" {
+            format!("https://shopee.co.id/{}", slug)  // This might need adjustment since Shopee shop URLs are structured differently
+        } else {
+            format!("https://www.tokopedia.com/{}", slug)
+        };
         let shop_display = shop_names.get(&slug).cloned().unwrap_or_else(|| slug.clone());
 
         let mut qresults: Vec<QueryResult> = Vec::new();
@@ -576,158 +741,285 @@ async fn scrape_products(window: tauri::Window, queries: Vec<String>) -> Result<
                 }
                 
             } else {
-                let shop_page = format!("https://www.tokopedia.com/{}", slug);
-                let _ = driver.goto(&shop_page).await;
-
-                // tunggu nama tokonya muncul
-                {
-                    use std::time::Duration as StdDuration;
-                    let start = std::time::Instant::now();
-                    let timeout = StdDuration::from_secs(6);
-                    loop {
-                        if driver
-                            .find(By::Css("h1[data-testid=\"shopNameHeader\"]"))
-                            .await
-                            .is_ok()
+                match platform.as_str() {
+                    "shopee" => {
+                        // For Shopee, we need to go back to the search page and search for the new query
+                        let search_url = format!(
+                            "https://shopee.co.id/search?keyword={}",
+                            urlencoding::encode(q)
+                        );
+                        let _ = driver.goto(&search_url).await;
+                        info!("Shopee search URL: {}", search_url);
+                        
+                        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                        
+                        // Wait for products to load
                         {
-                            break;
-                        }
-
-                        if start.elapsed() >= timeout {
-                            // timed out waiting
-                            info!("Timed out waiting for shopNameHeader to load");
-                            break;
-                        }
-                        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-                    }
-                }
-                // wait products to load.
-                let mut used_input = false;
-                if perform_site_search(&driver, q).await.is_ok() {
-                    used_input = true;
-                    info!("Performed search via input for shop {} query {}", slug, q);
-                    {
-                        use std::time::Duration as StdDuration;
-                        let start = std::time::Instant::now();
-                        let timeout = StdDuration::from_secs(6);
-                        loop {
-                            if driver
-                                .find(By::Css("img[alt=\"product-image\"]"))
-                                .await
-                                .is_ok()
-                            {   
-                                info!("Found products");
-                                break;
-                            }
-
-                            if driver
-                                .find(By::Css("div[class=\"unf-emptystate-img\"]"))
-                                .await
-                                .is_ok()
-                            {   
-                                info!("emptystate");
-                                break;
-                            } else {
-                                if start.elapsed() >= timeout {
-                                    // timed out waiting
-                                    info!("Timed out waiting for products to load 1");
+                            use std::time::Duration as StdDuration;
+                            let start = std::time::Instant::now();
+                            let timeout = StdDuration::from_secs(6);
+                            loop {
+                                if driver
+                                    .find(By::Css(".shopee-search-item-result__item"))
+                                    .await
+                                    .is_ok()
+                                {   
+                                    info!("Shopee products found");
                                     break;
                                 }
+
+                                if start.elapsed() >= timeout {
+                                    // timed out waiting
+                                    info!("Timed out waiting for Shopee products to load");
+                                    break;
+                                }
+                                
+                                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
                             }
+                        }
+                        
+                        // Get Shopee cards
+                        let cards = match driver
+                            .find_all(By::Css(".shopee-search-item-result__item"))
+                            .await
+                        {
+                            Ok(v) => v,
+                            Err(_) => Vec::new(),
+                        };
+
+                        for c in cards.into_iter().take(20) {
+                            let link_element = match c.find(By::Css("a.contents"))
+                                .await {
+                                Ok(el) => el,
+                                Err(_) => continue, // Skip if no link found
+                            };
                             
-                            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                            let link = match link_element.attr("href").await {
+                                Ok(opt) => opt.unwrap_or_default(),
+                                Err(_) => String::new(),
+                            };
+                            
+                            if link.starts_with("/") {
+                                let full_link = format!("https://shopee.co.id{}", link);
+                                
+                                // Extract product name
+                                let name = match c.find(By::Css(".line-clamp-2.break-words")).await {
+                                    Ok(el) => el.text().await.unwrap_or_default(),
+                                    Err(_) => String::new(),
+                                };
+                                
+                                // Extract price
+                                let price = {
+                                    let price_element = match c.find(By::Css("[data-testid=\"a11y-label\"] + div .truncate.text-base\\/5.font-medium")).await {
+                                        Ok(el) => el,
+                                        Err(_) => {
+                                            // Alternative selector for price
+                                            match c.find(By::Css(".text-shopee-primary .truncate.text-base\\/5.font-medium")).await {
+                                                Ok(el) => el,
+                                                Err(_) => {
+                                                    // Try another approach
+                                                    match c.find(By::Css(".flex-shrink.min-w-0.mr-1.truncate.text-shopee-primary .truncate.text-base\\/5.font-medium")).await {
+                                                        Ok(el) => el,
+                                                        Err(_) => {
+                                                            // If all else fails, return empty string
+                                                            continue; // Skip this item
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    };
+                                    price_element.text().await.unwrap_or_default()
+                                };
+                                
+                                // Extract shop name
+                                let shop = "Shopee Official Store".to_string();
+                                
+                                // Extract location
+                                let location = match c.find(By::Css(".text-shopee-black54.font-extralight.text-sp10 .align-middle")).await {
+                                    Ok(el) => el.text().await.unwrap_or_default(),
+                                    Err(_) => String::new(),
+                                };
+                                
+                                // Extract photo
+                                let photo = match c.find(By::Css("img[alt=\"product-image\"], img[src*='simg'], img[src*='shopee']"))
+                                    .await {
+                                    Ok(el) => el.attr("src").await.unwrap_or(None).unwrap_or_default(),
+                                    Err(_) => {
+                                        // Try to get the first image in the product card
+                                        match c.find(By::Css("img"))
+                                            .await {
+                                            Ok(el) => el.attr("src").await.unwrap_or(None).unwrap_or_default(),
+                                            Err(_) => String::new(),
+                                        }
+                                    }
+                                };
+                                
+                                products.push(Product {
+                                    name,
+                                    price: format!("Rp{}", price),
+                                    shop: shop.clone(),
+                                    location,
+                                    photo,
+                                    link: full_link,
+                                });
+                            }
+                        }
+                    },
+                    _ => { // Default to Tokopedia
+                        let shop_page = format!("https://www.tokopedia.com/{}", slug);
+                        let _ = driver.goto(&shop_page).await;
+
+                        // tunggu nama tokonya muncul
+                        {
+                            use std::time::Duration as StdDuration;
+                            let start = std::time::Instant::now();
+                            let timeout = StdDuration::from_secs(6);
+                            loop {
+                                if driver
+                                    .find(By::Css("h1[data-testid=\"shopNameHeader\"]"))
+                                    .await
+                                    .is_ok()
+                                {
+                                    break;
+                                }
+
+                                if start.elapsed() >= timeout {
+                                    // timed out waiting
+                                    info!("Timed out waiting for shopNameHeader to load");
+                                    break;
+                                }
+                                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                            }
+                        }
+                        // wait products to load.
+                        let mut used_input = false;
+                        if perform_tokopedia_search(&driver, q).await.is_ok() {
+                            used_input = true;
+                            info!("Performed search via input for shop {} query {}", slug, q);
+                            {
+                                use std::time::Duration as StdDuration;
+                                let start = std::time::Instant::now();
+                                let timeout = StdDuration::from_secs(6);
+                                loop {
+                                    if driver
+                                        .find(By::Css("img[alt=\"product-image\"]"))
+                                        .await
+                                        .is_ok()
+                                    {   
+                                        info!("Found products");
+                                        break;
+                                    }
+
+                                    if driver
+                                        .find(By::Css("div[class=\"unf-emptystate-img\"]"))
+                                        .await
+                                        .is_ok()
+                                    {   
+                                        info!("emptystate");
+                                        break;
+                                    } else {
+                                        if start.elapsed() >= timeout {
+                                            // timed out waiting
+                                            info!("Timed out waiting for products to load 1");
+                                            break;
+                                        }
+                                    }
+                                    
+                                    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                                }
+                            }
+                        }
+
+                        tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
+
+                        // gagal cari pakai input, coba cari langsung dengan url (rawan redirect)
+                        if !used_input {
+                            let url = format!(
+                                "https://www.tokopedia.com/{}/product?q={}&srp_page_title={}&navsource=shop&srp_component_id=02.01.00.00",
+                                slug,
+                                urlencoding::encode(q),
+                                urlencoding::encode(&shop_display)
+                            );
+                            let _ = driver.goto(&url).await;
+                            info!("Fallback URL PENCARIAN : {}", url);
+                        }
+
+                        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+
+                        let cards = match driver
+                            .find_all(By::Css(r#"[data-ssr="shopSSR"] > div:nth-child(2) a[data-theme="default"]"#))
+                            .await
+                        {
+                            Ok(v) => v,
+                            Err(_) => Vec::new(),
+                        };
+
+                        for c in cards.into_iter().take(20) {
+                            let link = match c.attr("href").await {
+                                Ok(opt) => opt.unwrap_or_default(),
+                                Err(_) => String::new(),
+                            };
+                            if link.starts_with(&format!("/{}/product?perpage", slug)) {
+                                continue;
+                            }
+                            let link = if link.starts_with("//") {
+                                format!("https:{}", link)
+                            } else if link.starts_with('/') {
+                                format!("https://www.tokopedia.com{}", link)
+                            } else {
+                                link
+                            };
+
+                            let spans = match c.find_all(By::Css("div:nth-child(1) > div:nth-child(2) > div:nth-child(1) span"))
+                                .await
+                            {
+                                Ok(v) => v,
+                                Err(_) => Vec::new(),
+                            };
+                            info!("CHECK SPAN : {}", slug);
+                            let mut name = String::new();
+                            for s in spans.into_iter().take(20) {
+                                info!("span: {}", s.text().await.unwrap_or_default());
+                                if !s.text().await.unwrap_or_default().is_empty() && name.is_empty() {
+                                    name = s.text().await.unwrap_or_default();
+                                }
+                            }
+
+                            // let name = match c.find(By::Css("div > div:nth-child(2) span:nth-child(1)")).await {
+                            //     Ok(el) => el.text().await.unwrap_or_default(),
+                            //     Err(_) => String::new(),
+                            // };
+                            let price = match c
+                                .find(By::Css("div > div:nth-child(2) > div:nth-child(2)"))
+                                .await
+                            {
+                                Ok(el) => el.text().await.unwrap_or_default(),
+                                Err(_) => String::new(),
+                            };
+                            let shop = shop_display.clone();
+                            let location = match c
+                                .find(By::Css("div > div:nth-child(2) > div:nth-child(3) span:nth-child(2)"))
+                                .await
+                            {
+                                Ok(el) => el.text().await.unwrap_or_default(),
+                                Err(_) => String::new(),
+                            };
+                            let photo = match c.find(By::Css("img[alt=\"product-image\"]")).await {
+                                Ok(el) => el.attr("src").await.unwrap_or(None).unwrap_or_default(),
+                                Err(_) => String::new(),
+                            };
+
+                            products.push(Product {
+                                name,
+                                price,
+                                shop: shop.clone(),
+                                location,
+                                photo,
+                                link,
+                            });
                         }
                     }
-                }
-
-                tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
-
-                // gagal cari pakai input, coba cari langsung dengan url (rawan redirect)
-                if !used_input {
-                    let url = format!(
-                        "https://www.tokopedia.com/{}/product?q={}&srp_page_title={}&navsource=shop&srp_component_id=02.01.00.00",
-                        slug,
-                        urlencoding::encode(q),
-                        urlencoding::encode(&shop_display)
-                    );
-                    let _ = driver.goto(&url).await;
-                    info!("Fallback URL PENCARIAN : {}", url);
-                }
-
-          
-                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-
-                let cards = match driver
-                    .find_all(By::Css(r#"[data-ssr="shopSSR"] > div:nth-child(2) a[data-theme="default"]"#))
-                    .await
-                {
-                    Ok(v) => v,
-                    Err(_) => Vec::new(),
-                };
-
-                for c in cards.into_iter().take(20) {
-                    let link = match c.attr("href").await {
-                        Ok(opt) => opt.unwrap_or_default(),
-                        Err(_) => String::new(),
-                    };
-                    if link.starts_with(&format!("/{}/product?perpage", slug)) {
-                        continue;
-                    }
-                    let link = if link.starts_with("//") {
-                        format!("https:{}", link)
-                    } else if link.starts_with('/') {
-                        format!("https://www.tokopedia.com{}", link)
-                    } else {
-                        link
-                    };
-
-                    let spans = match c.find_all(By::Css("div:nth-child(1) > div:nth-child(2) > div:nth-child(1) span"))
-                        .await
-                    {
-                        Ok(v) => v,
-                        Err(_) => Vec::new(),
-                    };
-                    info!("CHECK SPAN : {}", slug);
-                    let mut name = String::new();
-                    for s in spans.into_iter().take(20) {
-                        info!("span: {}", s.text().await.unwrap_or_default());
-                        if !s.text().await.unwrap_or_default().is_empty() && name.is_empty() {
-                            name = s.text().await.unwrap_or_default();
-                        }
-                    }
-
-                    // let name = match c.find(By::Css("div > div:nth-child(2) span:nth-child(1)")).await {
-                    //     Ok(el) => el.text().await.unwrap_or_default(),
-                    //     Err(_) => String::new(),
-                    // };
-                    let price = match c
-                        .find(By::Css("div > div:nth-child(2) > div:nth-child(2)"))
-                        .await
-                    {
-                        Ok(el) => el.text().await.unwrap_or_default(),
-                        Err(_) => String::new(),
-                    };
-                    let shop = shop_display.clone();
-                    let location = match c
-                        .find(By::Css("div > div:nth-child(2) > div:nth-child(3) span:nth-child(2)"))
-                        .await
-                    {
-                        Ok(el) => el.text().await.unwrap_or_default(),
-                        Err(_) => String::new(),
-                    };
-                    let photo = match c.find(By::Css("img[alt=\"product-image\"]")).await {
-                        Ok(el) => el.attr("src").await.unwrap_or(None).unwrap_or_default(),
-                        Err(_) => String::new(),
-                    };
-
-                    products.push(Product {
-                        name,
-                        price,
-                        shop: shop.clone(),
-                        location,
-                        photo,
-                        link,
-                    });
                 }
             }
 
@@ -740,6 +1032,7 @@ async fn scrape_products(window: tauri::Window, queries: Vec<String>) -> Result<
         let shop_result = ShopResults {
             shop_name: shop_display.clone(),
             shop_url: shop_url.clone(),
+            platform: platform.clone(),  // Add platform
             results: qresults,
         };
 
@@ -879,45 +1172,49 @@ async fn open_browser_with_driver() -> Result<(), String> {
     // use std::time::Duration;
     
 
-    // Check chromedriver
-    let driver_path = ensure_chromedriver().await.map_err(|e| e.to_string())?;
+    // // Check chromedriver
+    // let driver_path = ensure_chromedriver().await.map_err(|e| e.to_string())?;
 
-    // Start chromedriver
-    let driver_path_buf = PathBuf::from(driver_path);
-    let driver_dir = driver_path_buf.parent().ok_or("invalid driver path")?;
+    // // Start chromedriver
+    // let driver_path_buf = PathBuf::from(driver_path);
+    // let driver_dir = driver_path_buf.parent().ok_or("invalid driver path")?;
 
-    // Launch chromedriver
-    let mut child = std::process::Command::new(driver_path_buf.as_os_str())
-        .arg("--port=9515")
-        .current_dir(driver_dir)
-        .spawn()
-        .map_err(|e| format!("failed to spawn chromedriver: {}", e))?;
+    // // Launch chromedriver
+    // let mut child = std::process::Command::new(driver_path_buf.as_os_str())
+    //     .arg("--port=9515")
+    //     .current_dir(driver_dir)
+    //     .spawn()
+    //     .map_err(|e| format!("failed to spawn chromedriver: {}", e))?;
 
 
-    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    // tokio::time::sleep(std::time::Duration::from_millis(500)).await;
 
-    let caps = DesiredCapabilities::chrome();
+    // let caps = DesiredCapabilities::chrome();
     
-    // Connect to WebDriver. The ? converts Err(WebDriverError) to Err(String).
-    let driver = WebDriver::new("http://127.0.0.1:9515", caps)
-        .await
-        .map_err(|e| format!("Fatal Error: Driver initialization failed. Details: {}", e.to_string()))?;
+    // // Connect to WebDriver. The ? converts Err(WebDriverError) to Err(String).
+    // let driver = WebDriver::new("http://127.0.0.1:9515", caps)
+    //     .await
+    //     .map_err(|e| format!("Fatal Error: Driver initialization failed. Details: {}", e.to_string()))?;
     
-    let url = "https://www.tokopedia.com/";
+    let url = "https://www.shopee.co.id/";
+    // let result_of_goto = driver.goto(url).await;
+
+    let driver = chrome().await.map_err(|e| format!("Fatal Error: Driver initialization failed. Details: {}", e.to_string()))?;
+
     let result_of_goto = driver.goto(url).await;
     
     // 💡 The 'result' variable MUST be a Result<(), String> to be returned.
     let final_result: Result<(), String> = match result_of_goto {
         // SUCCESS: Navigation succeeded. Return Ok(()).
         Ok(()) => {
-            let _ = child.kill();
+            //let _ = child.kill();
             println!("Success: Navigated to '{}'", url);
             Ok(())
         },
         
         // ERROR: Navigation failed. Format the error string and wrap it in Err().
         Err(e) => {
-            let _ = child.kill();
+            //let _ = child.kill();
             // Use {:?} to format the WebDriverError for logging/debugging
             Err(format!("Navigation Error: Failed to navigate to '{}'. Details: {:?}", url, e))
         },

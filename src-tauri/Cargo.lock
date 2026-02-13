@@ -3830,6 +3830,7 @@ dependencies = [
  "tempfile",
  "thirtyfour",
  "tokio",
+ "undetected-chromedriver",
  "urlencoding",
  "zip",
 ]
@@ -5218,6 +5219,20 @@ dependencies = [
  "memoffset",
  "tempfile",
  "winapi",
+]
+
+[[package]]
+name = "undetected-chromedriver"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4a53c5758ef1067c2fbddcfac1cd3222bf2418ef96a50c1aa937eae1735c7403"
+dependencies = [
+ "rand 0.8.5",
+ "reqwest 0.11.27",
+ "serde_json",
+ "thirtyfour",
+ "tokio",
+ "zip",
 ]
 
 [[package]]
