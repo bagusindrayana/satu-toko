@@ -1,20 +1,22 @@
 # SatuToko Module Structure
 
-This document describes the modular structure of the SatuToko application.
+This document describes the modular structure of the SatuToko application after refactoring.
 
-## Module Overview
+## 🔄 Refactoring Summary
 
-The application has been refactored into several focused modules:
+The original monolithic `lib.rs` has been refactored into focused modules while **preserving the original scraping logic**. The core functionality remains exactly the same - only the organization has improved.
+
+## 📁 Module Overview
 
 ### Core Modules
 
-#### `models.rs`
+#### `models.rs` - Data Structures
 Contains all data structures used throughout the application:
 - `Product` - Represents a product with name, price, shop, location, photo, and link
-- `QueryResult` - Contains search query and associated products
+- `QueryResult` - Contains search query and associated products  
 - `ShopResults` - Contains shop information and search results for multiple queries
 
-#### `chromedriver.rs`
+#### `chromedriver.rs` - ChromeDriver Management
 Handles ChromeDriver management:
 - `ensure_chromedriver()` - Downloads and manages compatible ChromeDriver
 - `patch_driver()` - Patches ChromeDriver to avoid detection
@@ -22,60 +24,108 @@ Handles ChromeDriver management:
 - `get_chrome_version()` - Gets installed Chrome version
 - `redownload_chromedriver()` - Re-downloads ChromeDriver
 
-#### `scraper.rs`
-Main scraping orchestration:
-- `scrape_products()` - Main function to scrape products from platforms
-- `scrape_tokopedia()` - Tokopedia-specific scraping logic
-- `scrape_shopee()` - Shopee-specific scraping logic
+#### `scraper.rs` - Main Scraping Logic
+**Contains the original scraping logic from lib.rs**, now properly organized:
+- `scrape_products()` - Main function with original shop-grouping logic
+- `scrape_tokopedia_original()` - Original Tokopedia scraping with shop extraction
+- `scrape_shopee_original()` - Original Shopee scraping logic
 - `open_chrome_with_driver()` - Opens Chrome with proper configuration
 - `get_chrome_and_driver_info()` - Gets version information
 
-#### `platforms.rs`
-Platform-specific scrapers:
-- `TokopediaScraper` - Dedicated Tokopedia scraping implementation
-- `ShopeeScraper` - Dedicated Shopee scraping implementation
+#### `platforms.rs` - Platform Utilities
+Legacy platform-specific utilities (kept for reference):
 - Helper functions for common scraping patterns
+- Note: Main platform logic is now in `scraper.rs` to preserve original functionality
 
-### Main Entry Point
-
-#### `lib.rs`
+#### `lib.rs` - Tauri Entry Point
 Tauri application entry point:
 - Exports Tauri commands
-- Handles plugin initialization
+- Handles plugin initialization  
 - Manages the application lifecycle
+- Now much cleaner and focused on Tauri-specific functionality
 
-## Architecture Benefits
+## ✅ What Was Preserved
+
+### Original Scraping Logic
+- **Shop grouping functionality** - Products are still grouped by shop as in the original
+- **Search flow** - Same navigation and search patterns
+- **CSS selectors** - Identical element selection logic
+- **Error handling** - Same error handling patterns
+- **Progress reporting** - Same real-time progress updates via Tauri events
+
+### Key Original Features Maintained
+1. **Multi-query support** - Can search multiple queries across shops
+2. **Shop-specific search** - Searches within individual shop pages
+3. **Fallback URLs** - Uses fallback URLs when input search fails
+4. **Timeout handling** - Same 6-second timeouts for element loading
+5. **Progress events** - Emits `scrape:progress` and `scrape:done` events
+6. **ChromeDriver management** - Same patching and version management
+
+## 🏗️ Architecture Benefits
 
 1. **Separation of Concerns**: Each module has a clear, focused responsibility
 2. **Maintainability**: Code is organized logically, making it easier to find and modify
 3. **Reusability**: Common functionality is extracted into reusable modules
 4. **Testability**: Each module can be tested independently
-5. **Scalability**: Easy to add new platforms or features
+5. **Scalability**: Easy to add new platforms or features while preserving existing logic
 
-## Usage Example
+## 📝 Usage Example
 
 ```rust
 use crate::models::{Product, QueryResult, ShopResults};
 use crate::scraper::scrape_products;
-use crate::chromedriver::ensure_chromedriver;
 
-// Scrape products from Tokopedia
-let results = scrape_products(window, vec!["laptop".to_string()], "tokopedia".to_string()).await?;
+// Scrape products from Tokopedia with original shop-grouping logic
+let results = scrape_products(
+    window, 
+    vec!["laptop".to_string(), "mouse".to_string()], 
+    "tokopedia".to_string()
+).await?;
 ```
 
-## Adding New Platforms
+## 🔧 Implementation Details
 
-To add a new platform:
+### Shop Grouping Logic (Preserved)
+The original shop grouping logic is preserved in `scraper.rs`:
+1. Search for first query to get initial products
+2. Extract shop slugs from product links
+3. For each shop, search all queries within that shop
+4. Group results by shop with proper metadata
 
-1. Create a new scraper in `platforms.rs`
-2. Add platform-specific logic in `scraper.rs`
-3. Update the main scraping function to handle the new platform
+### Platform-Specific Selectors (Preserved)
+- **Tokopedia**: Uses original selectors like `div[data-ssr="contentProductsSRPSSR"] a`
+- **Shopee**: Uses original selectors like `.shopee-search-item-result__item a`
 
-## Dependencies
+### Error Handling (Preserved)
+- Same timeout mechanisms
+- Same fallback URL strategies  
+- Same element waiting logic
+- Same error propagation
 
-Key dependencies:
+## 🚀 Adding New Features
+
+To add new features while preserving existing logic:
+
+1. **New Platforms**: Add new functions in `scraper.rs` following the existing pattern
+2. **Enhanced Logic**: Modify functions in `scraper.rs` while keeping original functions as fallback
+3. **New Data Fields**: Update `models.rs` and corresponding scraping logic
+4. **UI Features**: Update `lib.rs` with new Tauri commands
+
+## 📦 Dependencies
+
+Key dependencies (unchanged):
 - `thirtyfour` - WebDriver automation
-- `tauri` - Desktop application framework
+- `tauri` - Desktop application framework  
 - `tokio` - Async runtime
 - `reqwest` - HTTP client
 - `serde` - Serialization
+
+## 🔍 Verification
+
+To verify the refactoring preserved functionality:
+1. **Same Results**: Output format and data structure identical to original
+2. **Same Behavior**: Same search patterns and shop grouping
+3. **Same Events**: Same progress reporting via Tauri events
+4. **Same Error Handling**: Same timeout and fallback mechanisms
+
+The refactoring is **structural, not functional** - your original scraping logic remains intact and operational! 🎯
