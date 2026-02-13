@@ -214,12 +214,28 @@ function App() {
         <div className="title-bar">
           <div className="title-bar-content">
             <h1 className="app-title">Satu Toko — Scraper</h1>
-            <button
-              onClick={onOpenDriver}
-              className="btn-secondary"
-            >
-              Open Driver
-            </button>
+            <div style={{ display: 'flex', gap: '8px' }}>
+              <button
+                onClick={onOpenShopee}
+                className="btn-primary"
+                style={{ fontSize: '14px', padding: '6px 12px' }}
+              >
+                Open Shopee
+              </button>
+              <button
+                onClick={onOpenTokopedia}
+                className="btn-primary"
+                style={{ fontSize: '14px', padding: '6px 12px' }}
+              >
+                Open Tokopedia
+              </button>
+              <button
+                onClick={onOpenDriver}
+                className="btn-secondary"
+              >
+                Chromedriver Setting
+              </button>
+            </div>
           </div>
         </div>
 
@@ -228,7 +244,7 @@ function App() {
           <div className="modal-overlay">
             <div className="modal-window">
               <div className="modal-header">
-                <h3 className="modal-title">Chrome Driver Information</h3>
+                <h3 className="modal-title">Chromedriver Setting</h3>
                 <button
                   onClick={closeModal}
                   className="btn-close"
@@ -296,23 +312,10 @@ function App() {
 
                 <div className="modal-actions">
                   <button
-                    onClick={onOpenShopee}
-                    disabled={infoLoading}
-                    className="btn-primary"
-                  >
-                    Open Shopee
-                  </button>
-                  <button
-                    onClick={onOpenTokopedia}
-                    disabled={infoLoading}
-                    className="btn-primary"
-                  >
-                    Open Tokopedia
-                  </button>
-                  <button
                     onClick={onReDownload}
                     disabled={infoLoading}
                     className="btn-secondary"
+                    style={{ width: '100%' }}
                   >
                     Re-Download Driver
                   </button>
