@@ -390,7 +390,7 @@ function App() {
                 <strong>Perhatian untuk Platform Shopee</strong>
                 <p>
                   Untuk menggunakan Shopee, Anda harus login terlebih dahulu.
-                  Klik tombol "Open Driver" di pojok kanan atas, lalu pilih "Open Shopee" untuk melakukan login.
+                  Klik tombol "Open shopee" di pojok kanan atas, browser chrome akan terbuka dan akan diarahkan ke halaman login shopee.
                 </p>
               </div>
             </div>
