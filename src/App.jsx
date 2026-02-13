@@ -123,8 +123,8 @@ function App() {
 
   async function onOpenShopee() {
     try {
-      await invoke("open_browser_with_driver", {
-        url: "https://shopee.co.id/login",
+      await invoke("open_chrome_with_driver", {
+        url: "https://shopee.co.id/buyer/login",
       });
       alert("Browser opened with ChromeDriver!");
     } catch (e) {
@@ -135,7 +135,7 @@ function App() {
 
   async function onOpenTokopedia() {
     try {
-      await invoke("open_browser_with_driver", {
+      await invoke("open_chrome_with_driver", {
         url: "https://www.tokopedia.com/login",
       });
       alert("Browser opened with ChromeDriver!");
