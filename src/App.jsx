@@ -207,6 +207,39 @@ function App() {
     }
   };
 
+  // Function to handle print
+  const handlePrint = async () => {
+    try {
+      // Call Tauri backend to create HTML file
+      const filePath = await invoke("create_print_html", { results });
+
+      // Open the file with default browser
+      await invoke("open_file_with_default_app", { path: filePath });
+
+      alert("File HTML untuk print telah dibuka di browser default Anda");
+    } catch (e) {
+      console.error(e);
+      alert("Gagal membuat file print: " + String(e));
+    }
+  };
+
+  // Function to handle export to Excel
+  const handleExportExcel = async () => {
+    try {
+      // Call Tauri backend to export CSV
+      const filePath = await invoke("export_to_excel", { results });
+
+      alert(`File berhasil disimpan di:\n${filePath}`);
+
+      // Open the folder containing the file
+      const folderPath = filePath.substring(0, filePath.lastIndexOf('\\'));
+      await invoke("open_file_with_default_app", { path: folderPath });
+    } catch (e) {
+      console.error(e);
+      alert("Gagal export ke Excel: " + String(e));
+    }
+  };
+
   return (
     <div className="app-container">
       <div className="app-window">
@@ -399,6 +432,27 @@ function App() {
 
         <div className="content-section">
           <h3 className="section-title">Hasil Pencarian</h3>
+
+          {/* Action buttons - only show when there are results */}
+          {!loading && results.length > 0 && (
+            <div style={{ display: 'flex', gap: '8px', marginBottom: '16px' }}>
+              <button
+                onClick={handlePrint}
+                className="btn-secondary"
+                style={{ fontSize: '14px', padding: '8px 16px' }}
+              >
+                🖨️ Print
+              </button>
+              <button
+                onClick={handleExportExcel}
+                className="btn-secondary"
+                style={{ fontSize: '14px', padding: '8px 16px' }}
+              >
+                📊 Export to Excel
+              </button>
+            </div>
+          )}
+
           <div>
             {loading && (
               <p className="text-sm text-gray-500">
@@ -424,8 +478,7 @@ function App() {
                   >
                     <h4 className="shop-name">
                       {shop.shop_name} -{" "}
-                      {shop.platform === "tokopedia" ? "Tokopedia" : "Shopee"} (
-                      {shop.results ? shop.results.length : 0} queries)
+                      {shop.platform === "tokopedia" ? "Tokopedia" : "Shopee"} ({shop.results ? shop.results.filter((r) => r.products && r.products.length > 0).length : 0}/{shop.results ? shop.results.length : 0})
                     </h4>
                     <div className="flex items-center gap-3">
                       {allFound && (

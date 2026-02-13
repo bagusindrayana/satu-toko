@@ -16,3 +16,10 @@ This template should help get you started developing with Tauri and React in Vit
 - [x] Tokopedia
 - [x] Shopee (need login)
 
+## Fitur
+- [x] Pencarian
+- [x] Print dan Export ke Excel
+- [] Histori Pencarian
+- [] Filter
+- [] Paginasi
+- [] Auto Add Cart?

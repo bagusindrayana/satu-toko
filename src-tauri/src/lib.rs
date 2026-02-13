@@ -120,6 +120,264 @@ fn set_chrome_profile_path(path: String) -> Result<(), String> {
     Ok(())
 }
 
+#[tauri::command]
+async fn export_to_excel(results: Vec<ShopResults>) -> Result<String, String> {
+    use chrono::Local;
+    
+    // Create CSV content
+    let mut csv_content = String::from("Nama Toko,Platform,URL Toko,Query,Nama Produk,Harga,Lokasi,Link Produk\n");
+    
+    for shop in results {
+        for query_result in shop.results {
+            for product in query_result.products {
+                let row = format!(
+                    "\"{}\",\"{}\",\"{}\",\"{}\",\"{}\",\"{}\",\"{}\",\"{}\"\n",
+                    shop.shop_name,
+                    if shop.platform == "tokopedia" { "Tokopedia" } else { "Shopee" },
+                    shop.shop_url,
+                    query_result.query,
+                    product.name,
+                    product.price,
+                    product.location,
+                    product.link
+                );
+                csv_content.push_str(&row);
+            }
+        }
+    }
+    
+    // Get downloads directory
+    let downloads_dir = dirs::download_dir()
+        .ok_or("Could not determine downloads directory")?;
+    
+    // Create filename with timestamp
+    let timestamp = Local::now().format("%Y-%m-%d_%H-%M-%S");
+    let filename = format!("hasil_pencarian_{}.csv", timestamp);
+    let file_path = downloads_dir.join(&filename);
+    
+    // Write file
+    fs::write(&file_path, csv_content)
+        .map_err(|e| format!("Failed to write CSV file: {}", e))?;
+    
+    Ok(file_path.to_string_lossy().to_string())
+}
+
+#[tauri::command]
+async fn create_print_html(results: Vec<ShopResults>) -> Result<String, String> {
+    use chrono::Local;
+    
+    let timestamp = Local::now().format("%d/%m/%Y %H:%M:%S");
+    
+    let mut html = format!(r#"<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Hasil Pencarian - Satu Toko</title>
+    <style>
+        body {{
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
+            padding: 20px;
+            color: #333;
+        }}
+        h1 {{
+            font-size: 24px;
+            margin-bottom: 10px;
+        }}
+        .timestamp {{
+            color: #666;
+            font-size: 14px;
+            margin-bottom: 30px;
+        }}
+        .shop-section {{
+            margin-bottom: 30px;
+            page-break-inside: avoid;
+        }}
+        .shop-header {{
+            background: #f0f0f0;
+            padding: 12px;
+            border-left: 4px solid #0078d4;
+            margin-bottom: 15px;
+        }}
+        .shop-name {{
+            font-size: 18px;
+            font-weight: 600;
+            margin: 0 0 5px 0;
+        }}
+        .shop-url {{
+            font-size: 12px;
+            color: #0078d4;
+            word-break: break-all;
+        }}
+        .query-section {{
+            margin-bottom: 20px;
+            padding-left: 15px;
+        }}
+        .query-title {{
+            font-size: 14px;
+            font-weight: 600;
+            color: #666;
+            margin-bottom: 10px;
+        }}
+        .product-table {{
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 15px;
+        }}
+        .product-table th {{
+            background: #f8f8f8;
+            border: 1px solid #ddd;
+            padding: 8px;
+            text-align: left;
+            font-size: 12px;
+            font-weight: 600;
+        }}
+        .product-table td {{
+            border: 1px solid #ddd;
+            padding: 8px;
+            font-size: 12px;
+        }}
+        .product-name {{
+            max-width: 300px;
+        }}
+        .product-price {{
+            color: #107c10;
+            font-weight: 500;
+            white-space: nowrap;
+        }}
+        .product-link {{
+            color: #0078d4;
+            font-size: 11px;
+            word-break: break-all;
+        }}
+        .no-results {{
+            color: #999;
+            font-style: italic;
+            padding: 10px;
+        }}
+        @media print {{
+            body {{ padding: 10px; }}
+            .shop-section {{ page-break-inside: avoid; }}
+        }}
+    </style>
+</head>
+<body>
+    <h1>Hasil Pencarian Produk</h1>
+    <div class="timestamp">Dicetak pada: {}</div>
+"#, timestamp);
+
+    for shop in results {
+        html.push_str(&format!(r#"
+    <div class="shop-section">
+        <div class="shop-header">
+            <div class="shop-name">{} - {}</div>
+            <div class="shop-url">{}</div>
+        </div>
+"#, 
+            shop.shop_name,
+            if shop.platform == "tokopedia" { "Tokopedia" } else { "Shopee" },
+            shop.shop_url
+        ));
+
+        for query_result in shop.results {
+            html.push_str(&format!(r#"
+        <div class="query-section">
+            <div class="query-title">Query: "{}" ({} produk)</div>
+"#, 
+                query_result.query,
+                query_result.products.len()
+            ));
+
+            if !query_result.products.is_empty() {
+                html.push_str(r#"
+            <table class="product-table">
+                <thead>
+                    <tr>
+                        <th>No</th>
+                        <th>Nama Produk</th>
+                        <th>Harga</th>
+                        <th>Link</th>
+                    </tr>
+                </thead>
+                <tbody>
+"#);
+
+                for (index, product) in query_result.products.iter().enumerate() {
+                    html.push_str(&format!(r#"
+                    <tr>
+                        <td>{}</td>
+                        <td class="product-name">{}</td>
+                        <td class="product-price">{}</td>
+                        <td class="product-link">{}</td>
+                    </tr>
+"#,
+                        index + 1,
+                        product.name,
+                        product.price,
+                        product.link
+                    ));
+                }
+
+                html.push_str(r#"
+                </tbody>
+            </table>
+"#);
+            } else {
+                html.push_str(r#"<div class="no-results">Tidak ada produk ditemukan</div>"#);
+            }
+
+            html.push_str("        </div>\n");
+        }
+
+        html.push_str("    </div>\n");
+    }
+
+    html.push_str(r#"
+</body>
+</html>
+"#);
+
+    // Save to temp file
+    let temp_dir = std::env::temp_dir();
+    let timestamp_file = Local::now().format("%Y%m%d_%H%M%S");
+    let filename = format!("satu_toko_print_{}.html", timestamp_file);
+    let file_path = temp_dir.join(&filename);
+    
+    fs::write(&file_path, html)
+        .map_err(|e| format!("Failed to write HTML file: {}", e))?;
+    
+    Ok(file_path.to_string_lossy().to_string())
+}
+
+#[tauri::command]
+fn open_file_with_default_app(path: String) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new("cmd")
+            .args(&["/C", "start", "", &path])
+            .spawn()
+            .map_err(|e| format!("Failed to open file: {}", e))?;
+    }
+    
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .arg(&path)
+            .spawn()
+            .map_err(|e| format!("Failed to open file: {}", e))?;
+    }
+    
+    #[cfg(target_os = "linux")]
+    {
+        std::process::Command::new("xdg-open")
+            .arg(&path)
+            .spawn()
+            .map_err(|e| format!("Failed to open file: {}", e))?;
+    }
+    
+    Ok(())
+}
+
+
 pub fn run() {
     tauri::Builder::default()
         .plugin(
@@ -141,7 +399,10 @@ pub fn run() {
             redownload_chromedriver,
             open_chrome_with_driver,
             get_chrome_profile_path,
-            set_chrome_profile_path
+            set_chrome_profile_path,
+            export_to_excel,
+            create_print_html,
+            open_file_with_default_app
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
