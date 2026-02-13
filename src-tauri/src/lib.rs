@@ -1,9 +1,10 @@
-use tauri_plugin_log::{Target, TargetKind};
 use log::{error, info};
+use rand::Rng;
 use serde::{Deserialize, Serialize};
-use tauri::Manager;
-use tauri::Emitter;
 use std::path::PathBuf;
+use tauri::Emitter;
+use tauri::Manager;
+use tauri_plugin_log::{Target, TargetKind};
 use undetected_chromedriver::chrome;
 
 #[tauri::command]
@@ -31,7 +32,7 @@ pub struct QueryResult {
 pub struct ShopResults {
     pub shop_name: String,
     pub shop_url: String,
-    pub platform: String,  // Add platform field
+    pub platform: String, // Add platform field
     pub results: Vec<QueryResult>,
 }
 
@@ -55,7 +56,12 @@ async fn ensure_chromedriver() -> Result<String, String> {
     info!("Detected Chrome version: {}", chrome_version);
 
     let parts: Vec<&str> = chrome_version.split('.').collect();
-    let prefix = parts.iter().take(2).map(|s| s.to_string()).collect::<Vec<_>>().join(".");
+    let prefix = parts
+        .iter()
+        .take(2)
+        .map(|s| s.to_string())
+        .collect::<Vec<_>>()
+        .join(".");
     if !prefix.is_empty() {
         chrome_version = prefix;
     }
@@ -71,7 +77,10 @@ async fn ensure_chromedriver() -> Result<String, String> {
     let existing_driver_path = driver_dir.join(executable_name);
     if existing_driver_path.exists() {
         // Try to run `chromedriver --version` and compare major version with Chrome
-        if let Ok(output) = Command::new(&existing_driver_path).arg("--version").output() {
+        if let Ok(output) = Command::new(&existing_driver_path)
+            .arg("--version")
+            .output()
+        {
             if output.status.success() {
                 let out_str = String::from_utf8_lossy(&output.stdout).to_string();
                 // expected: "ChromeDriver 116.0.5845.96 (...)" -> take the second token
@@ -79,10 +88,16 @@ async fn ensure_chromedriver() -> Result<String, String> {
                     let driver_major = driver_ver.split('.').next().unwrap_or(driver_ver);
                     let chrome_major = chrome_version.split('.').next().unwrap_or(&chrome_version);
                     if driver_major == chrome_major {
-                        info!("Found existing chromedriver with matching major version: {}", driver_ver);
+                        info!(
+                            "Found existing chromedriver with matching major version: {}",
+                            driver_ver
+                        );
                         return Ok(existing_driver_path.to_string_lossy().to_string());
                     } else {
-                        info!("Existing chromedriver major {} != chrome major {} -> will re-download", driver_major, chrome_major);
+                        info!(
+                            "Existing chromedriver major {} != chrome major {} -> will re-download",
+                            driver_major, chrome_major
+                        );
                         // attempt to remove mismatched driver to ensure fresh install
                         let _ = std::fs::remove_file(&existing_driver_path);
                     }
@@ -95,6 +110,8 @@ async fn ensure_chromedriver() -> Result<String, String> {
             info!("Failed to execute existing chromedriver -> re-download");
             let _ = std::fs::remove_file(&existing_driver_path);
         }
+
+        patch_driver();
     }
 
     // 3) Fetch chrome-for-testing JSON
@@ -178,7 +195,7 @@ async fn ensure_chromedriver() -> Result<String, String> {
             let out_path = driver_dir.join(executable_name);
             let mut out_file = fs::File::create(&out_path).map_err(|e| e.to_string())?;
             std::io::copy(&mut file, &mut out_file).map_err(|e| e.to_string())?;
-            
+
             // Set executable permissions on Unix systems
             #[cfg(unix)]
             {
@@ -189,10 +206,99 @@ async fn ensure_chromedriver() -> Result<String, String> {
                 perms.set_mode(0o755);
                 fs::set_permissions(&out_path, perms).map_err(|e| e.to_string())?;
             }
+            patch_driver();
             return Ok(out_path.to_string_lossy().to_string());
         }
     }
     Err(format!("{} not found in archive", executable_name).to_string())
+}
+
+fn patch_driver() -> Result<(), String> {
+    use std::fs;
+    let os = std::env::consts::OS;
+    // Determine local app data path (multiplatform)
+    let driver_dir = dirs::data_local_dir()
+        .ok_or("Could not determine local data directory")?
+        .join("satu-toko")
+        .join("chromedriver");
+    fs::create_dir_all(&driver_dir).map_err(|e| e.to_string())?;
+
+    let chromedriver_executable = match os {
+        "linux" => driver_dir.join("chromedriver_PATCHED"),
+        "macos" => driver_dir.join("chromedriver_PATCHED"),
+        "windows" => driver_dir.join("chromedriver_PATCHED.exe"),
+        _ => panic!("Unsupported OS!"),
+    };
+    match !chromedriver_executable.exists() {
+        true => {
+            println!("Starting ChromeDriver executable patch...");
+            let file_name = if cfg!(windows) {
+                "chromedriver.exe"
+            } else {
+                "chromedriver"
+            };
+            let f = std::fs::read(file_name).unwrap();
+            let mut new_chromedriver_bytes = f.clone();
+            let mut total_cdc = String::from("");
+            let mut cdc_pos_list = Vec::new();
+            let mut is_cdc_present = false;
+            let mut patch_ct = 0;
+            for i in 0..f.len() - 3 {
+                if "cdc_"
+                    == format!(
+                        "{}{}{}{}",
+                        f[i] as char,
+                        f[i + 1] as char,
+                        f[i + 2] as char,
+                        f[i + 3] as char
+                    )
+                    .as_str()
+                {
+                    for x in i + 4..i + 22 {
+                        total_cdc.push_str(&(f[x] as char).to_string());
+                    }
+                    is_cdc_present = true;
+                    cdc_pos_list.push(i);
+                    total_cdc = String::from("");
+                }
+            }
+            match is_cdc_present {
+                true => println!("Found cdcs!"),
+                false => println!("No cdcs were found!"),
+            }
+            let get_random_char = || -> char {
+                "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+                    .chars()
+                    .collect::<Vec<char>>()[rand::thread_rng().gen_range(0..48)]
+            };
+
+            for i in cdc_pos_list {
+                for x in i + 4..i + 22 {
+                    new_chromedriver_bytes[x] = get_random_char() as u8;
+                }
+                patch_ct += 1;
+            }
+            println!("Patched {} cdcs!", patch_ct);
+
+            println!("Starting to write to binary file...");
+            let _file = std::fs::File::create(&chromedriver_executable).unwrap();
+            match std::fs::write(&chromedriver_executable, new_chromedriver_bytes) {
+                Ok(_res) => {
+                    println!("Successfully wrote patched executable to 'chromedriver_PATCHED'!",);
+                    Ok(())
+                }
+                Err(err) => {
+                    println!("Error when writing patch to file! Error: {}", err);
+                    Err(err)
+                }
+            };
+            Ok(())
+        }
+        false => {
+            println!("Detected patched chromedriver executable!");
+            Ok(())
+        }
+    }
 }
 
 // Helper function to find Chrome executable path
@@ -204,24 +310,24 @@ fn find_chrome_executable() -> Option<String> {
             r"C:\Program Files\Google\Chrome\Application\chrome.exe",
             r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
         ];
-        
+
         for path in &paths {
             if std::path::Path::new(path).exists() {
                 return Some(path.to_string());
             }
         }
-        
+
         // Try just "chrome" which might be in PATH
         if is_command_available("chrome") {
             return Some("chrome".to_string());
         }
-        
-        // Try "chrome.exe" 
+
+        // Try "chrome.exe"
         if is_command_available("chrome.exe") {
             return Some("chrome.exe".to_string());
         }
     }
-    
+
     #[cfg(target_os = "macos")]
     {
         // Try the standard macOS Chrome path
@@ -229,24 +335,29 @@ fn find_chrome_executable() -> Option<String> {
         if std::path::Path::new(path).exists() {
             return Some(path.to_string());
         }
-        
+
         // Try "google-chrome" which might be in PATH
         if is_command_available("google-chrome") {
             return Some("google-chrome".to_string());
         }
     }
-    
+
     #[cfg(target_os = "linux")]
     {
         // Try common Linux Chrome/Chromium commands
-        let commands = ["google-chrome", "google-chrome-stable", "chromium-browser", "chromium"];
+        let commands = [
+            "google-chrome",
+            "google-chrome-stable",
+            "chromium-browser",
+            "chromium",
+        ];
         for cmd in &commands {
             if is_command_available(cmd) {
                 return Some(cmd.to_string());
             }
         }
     }
-    
+
     // Universal fallback - try common commands
     let commands = ["chrome", "google-chrome", "chromium-browser", "chromium"];
     for cmd in &commands {
@@ -254,7 +365,7 @@ fn find_chrome_executable() -> Option<String> {
             return Some(cmd.to_string());
         }
     }
-    
+
     None
 }
 
@@ -269,7 +380,7 @@ fn is_command_available(command: &str) -> bool {
             .map(|output| output.status.success() && !output.stdout.is_empty())
             .unwrap_or(false)
     }
-    
+
     #[cfg(not(target_os = "windows"))]
     {
         Command::new("which")
@@ -358,10 +469,12 @@ fn get_chrome_version() -> Result<String, anyhow::Error> {
                 if o.status.success() {
                     let s = String::from_utf8_lossy(&o.stdout).to_string();
                     let parts: Vec<&str> = s.split_whitespace().collect();
-                    if let Some(ver) = parts.get(2) {  // Chrome version is typically the 3rd word
+                    if let Some(ver) = parts.get(2) {
+                        // Chrome version is typically the 3rd word
                         let v2 = ver.split('.').take(2).collect::<Vec<_>>().join(".");
                         return Ok(v2);
-                    } else if let Some(ver) = parts.last() {  // Fallback for other formats
+                    } else if let Some(ver) = parts.last() {
+                        // Fallback for other formats
                         let v2 = ver.split('.').take(2).collect::<Vec<_>>().join(".");
                         return Ok(v2);
                     }
@@ -376,10 +489,12 @@ fn get_chrome_version() -> Result<String, anyhow::Error> {
             if o.status.success() {
                 let s = String::from_utf8_lossy(&o.stdout).to_string();
                 let parts: Vec<&str> = s.split_whitespace().collect();
-                if let Some(ver) = parts.get(2) {  // Chrome version is typically the 3rd word
+                if let Some(ver) = parts.get(2) {
+                    // Chrome version is typically the 3rd word
                     let v2 = ver.split('.').take(2).collect::<Vec<_>>().join(".");
                     return Ok(v2);
-                } else if let Some(ver) = parts.last() {  // Fallback for other formats
+                } else if let Some(ver) = parts.last() {
+                    // Fallback for other formats
                     let v2 = ver.split('.').take(2).collect::<Vec<_>>().join(".");
                     return Ok(v2);
                 }
@@ -392,7 +507,11 @@ fn get_chrome_version() -> Result<String, anyhow::Error> {
 }
 
 #[tauri::command]
-async fn scrape_products(window: tauri::Window, queries: Vec<String>, platform: String) -> Result<Vec<ShopResults>, String> {
+async fn scrape_products(
+    window: tauri::Window,
+    queries: Vec<String>,
+    platform: String,
+) -> Result<Vec<ShopResults>, String> {
     use std::env;
     use std::path::PathBuf;
     use thirtyfour::prelude::*;
@@ -405,19 +524,54 @@ async fn scrape_products(window: tauri::Window, queries: Vec<String>, platform: 
     let driver_path_buf = PathBuf::from(driver_path);
     let driver_dir = driver_path_buf.parent().ok_or("invalid driver path")?;
 
+    // let port: usize = rand::thread_rng().gen_range(5000..9000);
+
+    // // Launch chromedriver
+    // let mut child = std::process::Command::new(driver_path_buf.as_os_str())
+    //     .arg(format!("--port={}", port))
+    //     .current_dir(driver_dir)
+    //     .spawn()
+    //     .map_err(|e| format!("failed to spawn chromedriver: {}", e))?;
+    //
+
+    let os = std::env::consts::OS;
+
+    let chromedriver_executable = match os {
+        "linux" => driver_dir.join("chromedriver_PATCHED"),
+        "macos" => driver_dir.join("chromedriver_PATCHED"),
+        "windows" => driver_dir.join("chromedriver_PATCHED.exe"),
+        _ => panic!("Unsupported OS!"),
+    };
+
+    // patch_driver();
+
+    let port: usize = rand::thread_rng().gen_range(5000..9000);
+
     // Launch chromedriver
-    let mut child = std::process::Command::new(driver_path_buf.as_os_str())
-        .arg("--port=9515")
+    let mut child = std::process::Command::new(chromedriver_executable.as_os_str())
+        .arg(format!("--port={}", port))
         .current_dir(driver_dir)
         .spawn()
         .map_err(|e| format!("failed to spawn chromedriver: {}", e))?;
 
-
     tokio::time::sleep(std::time::Duration::from_millis(500)).await;
 
     // Connect with thirtyfour
-    let caps = DesiredCapabilities::chrome();
-    let driver = WebDriver::new("http://127.0.0.1:9515", caps)
+    let mut caps = DesiredCapabilities::chrome();
+    caps.add_chrome_arg(
+        "--user-data-dir=C:\\Users\\bagus\\AppData\\Local\\Google\\Chrome\\User Data\\Profile 1",
+    )
+    .unwrap();
+    caps.set_no_sandbox().unwrap();
+    caps.set_disable_dev_shm_usage().unwrap();
+    caps.add_chrome_arg("--disable-blink-features=AutomationControlled")
+        .unwrap();
+    caps.add_chrome_arg("window-size=1920,1080").unwrap();
+    caps.add_chrome_arg("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/102.0.0.0 Safari/537.36").unwrap();
+    caps.add_chrome_arg("disable-infobars").unwrap();
+    caps.add_chrome_option("excludeSwitches", ["enable-automation"])
+        .unwrap();
+    let driver = WebDriver::new(format!("http://127.0.0.1:{}", port).as_str(), caps)
         .await
         .map_err(|e| e.to_string())?;
 
@@ -444,7 +598,7 @@ async fn scrape_products(window: tauri::Window, queries: Vec<String>, platform: 
         }
         Err(())
     }
-    
+
     async fn perform_shopee_search(driver: &WebDriver, query: &str) -> Result<(), ()> {
         // Cari input pada Shopee
         let sel = r#"input[type=\"text\"][class*=\"shopee-search-input__input\"]"#;
@@ -468,7 +622,10 @@ async fn scrape_products(window: tauri::Window, queries: Vec<String>, platform: 
             tokio::time::sleep(std::time::Duration::from_secs(2)).await;
 
             // coba cari dengan input
-            if perform_tokopedia_search(&driver, first_query).await.is_err() {
+            if perform_tokopedia_search(&driver, first_query)
+                .await
+                .is_err()
+            {
                 let first_url = format!(
                     "https://www.tokopedia.com/search?q={}",
                     urlencoding::encode(first_query)
@@ -478,7 +635,7 @@ async fn scrape_products(window: tauri::Window, queries: Vec<String>, platform: 
             } else {
                 tokio::time::sleep(std::time::Duration::from_secs(2)).await;
             }
-        },
+        }
         "shopee" => {
             let _ = driver.goto("https://shopee.co.id/").await;
             tokio::time::sleep(std::time::Duration::from_secs(2)).await;
@@ -494,12 +651,15 @@ async fn scrape_products(window: tauri::Window, queries: Vec<String>, platform: 
             } else {
                 tokio::time::sleep(std::time::Duration::from_secs(2)).await;
             }
-        },
+        }
         _ => {
             let _ = driver.goto("https://www.tokopedia.com/").await;
             tokio::time::sleep(std::time::Duration::from_secs(2)).await;
 
-            if perform_tokopedia_search(&driver, first_query).await.is_err() {
+            if perform_tokopedia_search(&driver, first_query)
+                .await
+                .is_err()
+            {
                 let first_url = format!(
                     "https://www.tokopedia.com/search?q={}",
                     urlencoding::encode(first_query)
@@ -522,8 +682,9 @@ async fn scrape_products(window: tauri::Window, queries: Vec<String>, platform: 
                 Ok(v) => v,
                 Err(_) => Vec::new(),
             }
-        },
-        _ => { // Default to tokopedia
+        }
+        _ => {
+            // Default to tokopedia
             match driver
                 .find_all(By::Css("div[data-ssr=\"contentProductsSRPSSR\"] a"))
                 .await
@@ -536,27 +697,29 @@ async fn scrape_products(window: tauri::Window, queries: Vec<String>, platform: 
 
     use std::collections::HashSet;
     let mut shop_slugs: HashSet<String> = HashSet::new();
-    let mut shop_names: std::collections::HashMap<String, String> = std::collections::HashMap::new();
-    let mut first_products_map: std::collections::HashMap<String, Vec<Product>> = std::collections::HashMap::new();
+    let mut shop_names: std::collections::HashMap<String, String> =
+        std::collections::HashMap::new();
+    let mut first_products_map: std::collections::HashMap<String, Vec<Product>> =
+        std::collections::HashMap::new();
 
     for c in first_cards.into_iter().take(20) {
         let link = match c.attr("href").await {
             Ok(opt) => opt.unwrap_or_default(),
             Err(_) => String::new(),
         };
-        
+
         let (product, shop_slug) = match platform.as_str() {
             "shopee" => {
                 // Handle Shopee product extraction
                 if link.starts_with("/") {
                     let full_link = format!("https://shopee.co.id{}", link);
-                    
+
                     // Extract product name
                     let name = match c.find(By::Css(".line-clamp-2.break-words")).await {
                         Ok(el) => el.text().await.unwrap_or_default(),
                         Err(_) => String::new(),
                     };
-                    
+
                     // Extract price - Shopee has a specific structure for prices
                     let price = {
                         let price_element = match c.find(By::Css("[data-testid=\"a11y-label\"] + div .truncate.text-base\\/5.font-medium")).await {
@@ -580,33 +743,41 @@ async fn scrape_products(window: tauri::Window, queries: Vec<String>, platform: 
                         };
                         price_element.text().await.unwrap_or_default()
                     };
-                    
+
                     // Extract shop name - for Shopee, we'll use a generic identifier
                     let shop = "Shopee Official Store".to_string();
-                    
+
                     // Extract location
-                    let location = match c.find(By::Css(".text-shopee-black54.font-extralight.text-sp10 .align-middle")).await {
+                    let location = match c
+                        .find(By::Css(
+                            ".text-shopee-black54.font-extralight.text-sp10 .align-middle",
+                        ))
+                        .await
+                    {
                         Ok(el) => el.text().await.unwrap_or_default(),
                         Err(_) => String::new(),
                     };
-                    
+
                     // Extract photo
-                    let photo = match c.find(By::Css("img[alt=\"product-image\"], img[src*='simg'], img[src*='shopee']"))
-                        .await {
+                    let photo = match c
+                        .find(By::Css(
+                            "img[alt=\"product-image\"], img[src*='simg'], img[src*='shopee']",
+                        ))
+                        .await
+                    {
                         Ok(el) => el.attr("src").await.unwrap_or(None).unwrap_or_default(),
                         Err(_) => {
                             // Try to get the first image in the product card
-                            match c.find(By::Css("img"))
-                                .await {
+                            match c.find(By::Css("img")).await {
                                 Ok(el) => el.attr("src").await.unwrap_or(None).unwrap_or_default(),
                                 Err(_) => String::new(),
                             }
                         }
                     };
-                    
+
                     // For Shopee, we'll use a generic shop identifier since shop slug is harder to extract from search results
                     let shop_slug = "shopee".to_string();
-                    
+
                     let product = Product {
                         name,
                         price: format!("Rp{}", price), // Add currency prefix
@@ -615,13 +786,14 @@ async fn scrape_products(window: tauri::Window, queries: Vec<String>, platform: 
                         photo,
                         link: full_link,
                     };
-                    
+
                     (product, shop_slug)
                 } else {
                     continue; // Skip if not a relative link
                 }
-            },
-            _ => { // Default to Tokopedia
+            }
+            _ => {
+                // Default to Tokopedia
                 if link.contains("/product?perpage=") {
                     continue;
                 }
@@ -637,8 +809,10 @@ async fn scrape_products(window: tauri::Window, queries: Vec<String>, platform: 
                 if let Some(rest) = link.strip_prefix(marker) {
                     if let Some((slug, _)) = rest.split_once('/') {
                         if !slug.is_empty() {
-
-                            let spans = match c.find_all(By::Css("div:nth-child(1) > div:nth-child(2) > div:nth-child(1) span"))
+                            let spans = match c
+                                .find_all(By::Css(
+                                    "div:nth-child(1) > div:nth-child(2) > div:nth-child(1) span",
+                                ))
                                 .await
                             {
                                 Ok(v) => v,
@@ -648,14 +822,12 @@ async fn scrape_products(window: tauri::Window, queries: Vec<String>, platform: 
                             let mut name = String::new();
                             for s in spans.into_iter().take(20) {
                                 info!("span: {}", s.text().await.unwrap_or_default());
-                                if !s.text().await.unwrap_or_default().is_empty() && name.is_empty() {
+                                if !s.text().await.unwrap_or_default().is_empty() && name.is_empty()
+                                {
                                     name = s.text().await.unwrap_or_default();
                                 }
                             }
-                            // let name = match c.find(By::Css("div > div:nth-child(2) span:nth-child(1)")).await {
-                            //     Ok(el) => el.text().await.unwrap_or_default(),
-                            //     Err(_) => String::new(),
-                            // };
+
                             let price = match c
                                 .find(By::Css("div > div:nth-child(2) > div:nth-child(2)"))
                                 .await
@@ -668,7 +840,9 @@ async fn scrape_products(window: tauri::Window, queries: Vec<String>, platform: 
                                 Err(_) => String::new(),
                             };
                             let location = match c
-                                .find(By::Css("div > div:nth-child(2) > div:nth-child(3) span:nth-child(2)"))
+                                .find(By::Css(
+                                    "div > div:nth-child(2) > div:nth-child(3) span:nth-child(2)",
+                                ))
                                 .await
                             {
                                 Ok(el) => el.text().await.unwrap_or_default(),
@@ -678,7 +852,6 @@ async fn scrape_products(window: tauri::Window, queries: Vec<String>, platform: 
                                 Ok(el) => el.attr("src").await.unwrap_or(None).unwrap_or_default(),
                                 Err(_) => String::new(),
                             };
-                            
 
                             shop_slugs.insert(slug.to_string());
                             if !shop_display.is_empty() {
@@ -697,7 +870,7 @@ async fn scrape_products(window: tauri::Window, queries: Vec<String>, platform: 
                                 .entry(slug.to_string())
                                 .or_insert_with(Vec::new)
                                 .push(prod);
-                            
+
                             continue; // Skip to next iteration for Tokopedia
                         }
                     }
@@ -705,13 +878,13 @@ async fn scrape_products(window: tauri::Window, queries: Vec<String>, platform: 
                 continue; // Skip if not a valid Tokopedia link
             }
         };
-        
+
         // For Shopee, we add the product to the map
         shop_slugs.insert(shop_slug.clone());
         if !product.shop.is_empty() {
             shop_names.insert(shop_slug.clone(), product.shop.clone());
         }
-        
+
         first_products_map
             .entry(shop_slug.clone())
             .or_insert_with(Vec::new)
@@ -722,14 +895,16 @@ async fn scrape_products(window: tauri::Window, queries: Vec<String>, platform: 
 
     for slug in shop_slugs.into_iter() {
         let shop_url = if platform == "shopee" {
-            format!("https://shopee.co.id/{}", slug)  // This might need adjustment since Shopee shop URLs are structured differently
+            format!("https://shopee.co.id/{}", slug) // This might need adjustment since Shopee shop URLs are structured differently
         } else {
             format!("https://www.tokopedia.com/{}", slug)
         };
-        let shop_display = shop_names.get(&slug).cloned().unwrap_or_else(|| slug.clone());
+        let shop_display = shop_names
+            .get(&slug)
+            .cloned()
+            .unwrap_or_else(|| slug.clone());
 
         let mut qresults: Vec<QueryResult> = Vec::new();
-        
 
         for q in &queries {
             let mut products: Vec<Product> = Vec::new();
@@ -739,7 +914,6 @@ async fn scrape_products(window: tauri::Window, queries: Vec<String>, platform: 
                 if let Some(v) = first_products_map.get(&slug) {
                     products = v.clone();
                 }
-                
             } else {
                 match platform.as_str() {
                     "shopee" => {
@@ -750,9 +924,9 @@ async fn scrape_products(window: tauri::Window, queries: Vec<String>, platform: 
                         );
                         let _ = driver.goto(&search_url).await;
                         info!("Shopee search URL: {}", search_url);
-                        
+
                         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-                        
+
                         // Wait for products to load
                         {
                             use std::time::Duration as StdDuration;
@@ -763,7 +937,7 @@ async fn scrape_products(window: tauri::Window, queries: Vec<String>, platform: 
                                     .find(By::Css(".shopee-search-item-result__item"))
                                     .await
                                     .is_ok()
-                                {   
+                                {
                                     info!("Shopee products found");
                                     break;
                                 }
@@ -773,11 +947,11 @@ async fn scrape_products(window: tauri::Window, queries: Vec<String>, platform: 
                                     info!("Timed out waiting for Shopee products to load");
                                     break;
                                 }
-                                
+
                                 tokio::time::sleep(std::time::Duration::from_millis(500)).await;
                             }
                         }
-                        
+
                         // Get Shopee cards
                         let cards = match driver
                             .find_all(By::Css(".shopee-search-item-result__item"))
@@ -788,26 +962,26 @@ async fn scrape_products(window: tauri::Window, queries: Vec<String>, platform: 
                         };
 
                         for c in cards.into_iter().take(20) {
-                            let link_element = match c.find(By::Css("a.contents"))
-                                .await {
+                            let link_element = match c.find(By::Css("a.contents")).await {
                                 Ok(el) => el,
                                 Err(_) => continue, // Skip if no link found
                             };
-                            
+
                             let link = match link_element.attr("href").await {
                                 Ok(opt) => opt.unwrap_or_default(),
                                 Err(_) => String::new(),
                             };
-                            
+
                             if link.starts_with("/") {
                                 let full_link = format!("https://shopee.co.id{}", link);
-                                
+
                                 // Extract product name
-                                let name = match c.find(By::Css(".line-clamp-2.break-words")).await {
+                                let name = match c.find(By::Css(".line-clamp-2.break-words")).await
+                                {
                                     Ok(el) => el.text().await.unwrap_or_default(),
                                     Err(_) => String::new(),
                                 };
-                                
+
                                 // Extract price
                                 let price = {
                                     let price_element = match c.find(By::Css("[data-testid=\"a11y-label\"] + div .truncate.text-base\\/5.font-medium")).await {
@@ -831,16 +1005,16 @@ async fn scrape_products(window: tauri::Window, queries: Vec<String>, platform: 
                                     };
                                     price_element.text().await.unwrap_or_default()
                                 };
-                                
+
                                 // Extract shop name
                                 let shop = "Shopee Official Store".to_string();
-                                
+
                                 // Extract location
                                 let location = match c.find(By::Css(".text-shopee-black54.font-extralight.text-sp10 .align-middle")).await {
                                     Ok(el) => el.text().await.unwrap_or_default(),
                                     Err(_) => String::new(),
                                 };
-                                
+
                                 // Extract photo
                                 let photo = match c.find(By::Css("img[alt=\"product-image\"], img[src*='simg'], img[src*='shopee']"))
                                     .await {
@@ -854,7 +1028,7 @@ async fn scrape_products(window: tauri::Window, queries: Vec<String>, platform: 
                                         }
                                     }
                                 };
-                                
+
                                 products.push(Product {
                                     name,
                                     price: format!("Rp{}", price),
@@ -865,8 +1039,9 @@ async fn scrape_products(window: tauri::Window, queries: Vec<String>, platform: 
                                 });
                             }
                         }
-                    },
-                    _ => { // Default to Tokopedia
+                    }
+                    _ => {
+                        // Default to Tokopedia
                         let shop_page = format!("https://www.tokopedia.com/{}", slug);
                         let _ = driver.goto(&shop_page).await;
 
@@ -906,7 +1081,7 @@ async fn scrape_products(window: tauri::Window, queries: Vec<String>, platform: 
                                         .find(By::Css("img[alt=\"product-image\"]"))
                                         .await
                                         .is_ok()
-                                    {   
+                                    {
                                         info!("Found products");
                                         break;
                                     }
@@ -915,7 +1090,7 @@ async fn scrape_products(window: tauri::Window, queries: Vec<String>, platform: 
                                         .find(By::Css("div[class=\"unf-emptystate-img\"]"))
                                         .await
                                         .is_ok()
-                                    {   
+                                    {
                                         info!("emptystate");
                                         break;
                                     } else {
@@ -925,7 +1100,7 @@ async fn scrape_products(window: tauri::Window, queries: Vec<String>, platform: 
                                             break;
                                         }
                                     }
-                                    
+
                                     tokio::time::sleep(std::time::Duration::from_millis(500)).await;
                                 }
                             }
@@ -971,7 +1146,10 @@ async fn scrape_products(window: tauri::Window, queries: Vec<String>, platform: 
                                 link
                             };
 
-                            let spans = match c.find_all(By::Css("div:nth-child(1) > div:nth-child(2) > div:nth-child(1) span"))
+                            let spans = match c
+                                .find_all(By::Css(
+                                    "div:nth-child(1) > div:nth-child(2) > div:nth-child(1) span",
+                                ))
                                 .await
                             {
                                 Ok(v) => v,
@@ -981,7 +1159,8 @@ async fn scrape_products(window: tauri::Window, queries: Vec<String>, platform: 
                             let mut name = String::new();
                             for s in spans.into_iter().take(20) {
                                 info!("span: {}", s.text().await.unwrap_or_default());
-                                if !s.text().await.unwrap_or_default().is_empty() && name.is_empty() {
+                                if !s.text().await.unwrap_or_default().is_empty() && name.is_empty()
+                                {
                                     name = s.text().await.unwrap_or_default();
                                 }
                             }
@@ -999,7 +1178,9 @@ async fn scrape_products(window: tauri::Window, queries: Vec<String>, platform: 
                             };
                             let shop = shop_display.clone();
                             let location = match c
-                                .find(By::Css("div > div:nth-child(2) > div:nth-child(3) span:nth-child(2)"))
+                                .find(By::Css(
+                                    "div > div:nth-child(2) > div:nth-child(3) span:nth-child(2)",
+                                ))
                                 .await
                             {
                                 Ok(el) => el.text().await.unwrap_or_default(),
@@ -1032,12 +1213,14 @@ async fn scrape_products(window: tauri::Window, queries: Vec<String>, platform: 
         let shop_result = ShopResults {
             shop_name: shop_display.clone(),
             shop_url: shop_url.clone(),
-            platform: platform.clone(),  // Add platform
+            platform: platform.clone(), // Add platform
             results: qresults,
         };
 
         // Emit progress real-time
-        let _ = window.emit("scrape:progress", shop_result.clone()).map_err(|e| e.to_string());
+        let _ = window
+            .emit("scrape:progress", shop_result.clone())
+            .map_err(|e| e.to_string());
 
         grouped.push(shop_result);
     }
@@ -1054,13 +1237,13 @@ async fn scrape_products(window: tauri::Window, queries: Vec<String>, platform: 
 #[tauri::command]
 async fn open_chrome_with_driver() -> Result<(), String> {
     use std::env;
-    
+
     // Determine driver directory (multiplatform)
     let driver_dir = dirs::data_local_dir()
         .ok_or("Could not determine local data directory")?
         .join("satu-toko")
         .join("chromedriver");
-    
+
     // Platform-specific file explorer
     #[cfg(target_os = "windows")]
     {
@@ -1068,30 +1251,30 @@ async fn open_chrome_with_driver() -> Result<(), String> {
         std::process::Command::new("explorer")
             .arg(path_str)
             .spawn()
-            .map(|_| ())  // Convert Result<Child, Error> to Result<(), Error>
+            .map(|_| ()) // Convert Result<Child, Error> to Result<(), Error>
             .map_err(|e| e.to_string())?;
     }
-    
+
     #[cfg(target_os = "macos")]
     {
         let path_str = driver_dir.to_string_lossy().to_string();
         std::process::Command::new("open")
             .arg(path_str)
             .spawn()
-            .map(|_| ())  // Convert Result<Child, Error> to Result<(), Error>
+            .map(|_| ()) // Convert Result<Child, Error> to Result<(), Error>
             .map_err(|e| e.to_string())?;
     }
-    
+
     #[cfg(target_os = "linux")]
     {
         let path_str = driver_dir.to_string_lossy().to_string();
         std::process::Command::new("xdg-open")
             .arg(path_str)
             .spawn()
-            .map(|_| ())  // Convert Result<Child, Error> to Result<(), Error>
+            .map(|_| ()) // Convert Result<Child, Error> to Result<(), Error>
             .map_err(|e| e.to_string())?;
     }
-    
+
     Ok(())
 }
 
@@ -1100,42 +1283,42 @@ async fn open_chrome_with_driver() -> Result<(), String> {
 async fn get_chrome_and_driver_info() -> Result<(String, String), String> {
     // Get Chrome version
     let chrome_version = get_chrome_version().map_err(|e| e.to_string())?;
-    
+
     // Get ChromeDriver version by running chromedriver --version
     use std::env;
     use std::process::Command;
-    
+
     // Determine driver path (multiplatform)
     let driver_dir = dirs::data_local_dir()
         .ok_or("Could not determine local data directory")?
         .join("satu-toko")
         .join("chromedriver");
-    
+
     // Platform-specific executable name
     let executable_name = if cfg!(target_os = "windows") {
         "chromedriver.exe"
     } else {
         "chromedriver"
     };
-    
+
     let driver_path = driver_dir.join(executable_name);
-    
+
     if !driver_path.exists() {
         return Err("ChromeDriver not found".to_string());
     }
-    
+
     let output = Command::new(driver_path)
         .arg("--version")
         .output()
         .map_err(|e| format!("Failed to execute ChromeDriver: {}", e))?;
-    
+
     let driver_version_output = String::from_utf8_lossy(&output.stdout);
     let driver_version = driver_version_output
         .split_whitespace()
         .nth(1)
         .unwrap_or("Unknown")
         .to_string();
-    
+
     Ok((chrome_version, driver_version))
 }
 
@@ -1144,83 +1327,95 @@ async fn get_chrome_and_driver_info() -> Result<(String, String), String> {
 async fn redownload_chromedriver() -> Result<String, String> {
     use std::env;
     use std::fs;
-    
+
     // Remove existing ChromeDriver
     let driver_dir = dirs::data_local_dir()
         .ok_or("Could not determine local data directory")?
         .join("satu-toko")
         .join("chromedriver");
-    
+
     // Remove the directory if it exists
     if driver_dir.exists() {
-        fs::remove_dir_all(&driver_dir).map_err(|e| format!("Failed to remove existing ChromeDriver: {}", e))?;
+        fs::remove_dir_all(&driver_dir)
+            .map_err(|e| format!("Failed to remove existing ChromeDriver: {}", e))?;
     }
-    
+
     // Re-download ChromeDriver
     ensure_chromedriver().await
 }
 
 // New command to open browser with ChromeDriver
 #[tauri::command]
-async fn open_browser_with_driver() -> Result<(), String> {
-    use std::env;
-    use std::path::PathBuf;
+async fn open_browser_with_driver(url: String) -> Result<(), String> {
     use thirtyfour::prelude::*;
-    use thirtyfour::Key;
-    // use std::process::Command;
-    // use std::thread;
-    // use std::time::Duration;
-    
+    let os = std::env::consts::OS;
 
-    // // Check chromedriver
-    // let driver_path = ensure_chromedriver().await.map_err(|e| e.to_string())?;
+    let driver_dir = dirs::data_local_dir()
+        .ok_or("Could not determine local data directory")?
+        .join("satu-toko")
+        .join("chromedriver");
 
-    // // Start chromedriver
-    // let driver_path_buf = PathBuf::from(driver_path);
-    // let driver_dir = driver_path_buf.parent().ok_or("invalid driver path")?;
+    let chromedriver_executable = match os {
+        "linux" => driver_dir.join("chromedriver_PATCHED"),
+        "macos" => driver_dir.join("chromedriver_PATCHED"),
+        "windows" => driver_dir.join("chromedriver_PATCHED.exe"),
+        _ => panic!("Unsupported OS!"),
+    };
 
-    // // Launch chromedriver
-    // let mut child = std::process::Command::new(driver_path_buf.as_os_str())
-    //     .arg("--port=9515")
-    //     .current_dir(driver_dir)
-    //     .spawn()
-    //     .map_err(|e| format!("failed to spawn chromedriver: {}", e))?;
+    patch_driver();
 
+    let port: usize = rand::thread_rng().gen_range(5000..9000);
 
-    // tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    // Launch chromedriver
+    let mut child = std::process::Command::new(chromedriver_executable.as_os_str())
+        .arg(format!("--port={}", port))
+        .current_dir(driver_dir)
+        .spawn()
+        .map_err(|e| format!("failed to spawn chromedriver: {}", e))?;
 
-    // let caps = DesiredCapabilities::chrome();
-    
-    // // Connect to WebDriver. The ? converts Err(WebDriverError) to Err(String).
-    // let driver = WebDriver::new("http://127.0.0.1:9515", caps)
-    //     .await
-    //     .map_err(|e| format!("Fatal Error: Driver initialization failed. Details: {}", e.to_string()))?;
-    
-    let url = "https://www.shopee.co.id/";
-    // let result_of_goto = driver.goto(url).await;
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
 
-    let driver = chrome().await.map_err(|e| format!("Fatal Error: Driver initialization failed. Details: {}", e.to_string()))?;
+    // Connect with thirtyfour
+    let mut caps = DesiredCapabilities::chrome();
+    caps.add_chrome_arg(
+        "--user-data-dir=C:\\Users\\bagus\\AppData\\Local\\Google\\Chrome\\User Data\\Profile 1",
+    )
+    .unwrap();
+    caps.set_no_sandbox().unwrap();
+    caps.set_disable_dev_shm_usage().unwrap();
+    caps.add_chrome_arg("--disable-blink-features=AutomationControlled")
+        .unwrap();
+    caps.add_chrome_arg("window-size=1920,1080").unwrap();
+    caps.add_chrome_arg("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/102.0.0.0 Safari/537.36").unwrap();
+    caps.add_chrome_arg("disable-infobars").unwrap();
+    caps.add_chrome_option("excludeSwitches", ["enable-automation"])
+        .unwrap();
 
-    let result_of_goto = driver.goto(url).await;
-    
+    let driver = WebDriver::new(format!("http://127.0.0.1:{}", port).as_str(), caps)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let result_of_goto = driver.goto(url.clone()).await;
+
     // 💡 The 'result' variable MUST be a Result<(), String> to be returned.
     let final_result: Result<(), String> = match result_of_goto {
         // SUCCESS: Navigation succeeded. Return Ok(()).
         Ok(()) => {
-            //let _ = child.kill();
+            let _ = child.kill();
             println!("Success: Navigated to '{}'", url);
             Ok(())
-        },
-        
+        }
+
         // ERROR: Navigation failed. Format the error string and wrap it in Err().
         Err(e) => {
-            //let _ = child.kill();
+            let _ = child.kill();
             // Use {:?} to format the WebDriverError for logging/debugging
-            Err(format!("Navigation Error: Failed to navigate to '{}'. Details: {:?}", url, e))
-        },
+            Err(format!(
+                "Navigation Error: Failed to navigate to '{}'. Details: {:?}",
+                url, e
+            ))
+        }
     };
-
-    
 
     // // Clean up the driver session
     // let _ = driver.quit().await;

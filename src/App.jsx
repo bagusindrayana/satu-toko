@@ -9,7 +9,10 @@ function App() {
   const [results, setResults] = useState([]);
   const [loading, setLoading] = useState(false);
   const [showDriverModal, setShowDriverModal] = useState(false);
-  const [chromeInfo, setChromeInfo] = useState({ chromeVersion: "", driverVersion: "" });
+  const [chromeInfo, setChromeInfo] = useState({
+    chromeVersion: "",
+    driverVersion: "",
+  });
   const [infoLoading, setInfoLoading] = useState(false);
   const [expandedShops, setExpandedShops] = useState({}); // Track expanded shops
   const [expandedQueries, setExpandedQueries] = useState({}); // Track expanded queries
@@ -70,7 +73,10 @@ function App() {
     setLoading(true);
     try {
       // invoke backend
-      const res = await invoke("scrape_products", { queries: tags, platform: selectedPlatform });
+      const res = await invoke("scrape_products", {
+        queries: tags,
+        platform: selectedPlatform,
+      });
       setResults(res);
       setLoading(false);
     } catch (e) {
@@ -83,7 +89,9 @@ function App() {
   async function loadChromeInfo() {
     setInfoLoading(true);
     try {
-      const [chromeVersion, driverVersion] = await invoke("get_chrome_and_driver_info");
+      const [chromeVersion, driverVersion] = await invoke(
+        "get_chrome_and_driver_info",
+      );
       setChromeInfo({ chromeVersion, driverVersion });
     } catch (e) {
       console.error(e);
@@ -113,9 +121,23 @@ function App() {
     }
   }
 
-  async function onOpenBrowser() {
+  async function onOpenShopee() {
     try {
-      await invoke("open_browser_with_driver");
+      await invoke("open_browser_with_driver", {
+        url: "https://shopee.co.id/login",
+      });
+      alert("Browser opened with ChromeDriver!");
+    } catch (e) {
+      console.error(e);
+      alert("Failed to open browser: " + String(e));
+    }
+  }
+
+  async function onOpenTokopedia() {
+    try {
+      await invoke("open_browser_with_driver", {
+        url: "https://www.tokopedia.com/login",
+      });
       alert("Browser opened with ChromeDriver!");
     } catch (e) {
       console.error(e);
@@ -129,18 +151,18 @@ function App() {
 
   // Function to toggle shop expansion
   const toggleShop = (shopIndex) => {
-    setExpandedShops(prev => ({
+    setExpandedShops((prev) => ({
       ...prev,
-      [shopIndex]: !prev[shopIndex]
+      [shopIndex]: !prev[shopIndex],
     }));
   };
 
   // Function to toggle query expansion
   const toggleQuery = (shopIndex, queryIndex) => {
     const key = `${shopIndex}-${queryIndex}`;
-    setExpandedQueries(prev => ({
+    setExpandedQueries((prev) => ({
       ...prev,
-      [key]: !prev[key]
+      [key]: !prev[key],
     }));
   };
 
@@ -150,7 +172,12 @@ function App() {
         <div className="flex justify-between items-start">
           <h2 className="text-xl font-semibold">Satu Toko — Scraper</h2>
           <div>
-            <button onClick={onOpenDriver} className="px-3 py-1 bg-gray-200 rounded">Open Driver</button>
+            <button
+              onClick={onOpenDriver}
+              className="px-3 py-1 bg-gray-200 rounded"
+            >
+              Open Driver
+            </button>
           </div>
         </div>
 
@@ -159,10 +186,25 @@ function App() {
           <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
             <div className="bg-white rounded-lg p-6 w-96">
               <div className="flex justify-between items-center mb-4">
-                <h3 className="text-lg font-semibold">Chrome Driver Information</h3>
-                <button onClick={closeModal} className="text-gray-500 hover:text-gray-700">
-                  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"></path>
+                <h3 className="text-lg font-semibold">
+                  Chrome Driver Information
+                </h3>
+                <button
+                  onClick={closeModal}
+                  className="text-gray-500 hover:text-gray-700"
+                >
+                  <svg
+                    className="w-6 h-6"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth="2"
+                      d="M6 18L18 6M6 6l12 12"
+                    ></path>
                   </svg>
                 </button>
               </div>
@@ -172,30 +214,38 @@ function App() {
               ) : (
                 <div className="space-y-4">
                   <div>
-                    <label className="block text-sm font-medium text-gray-700">Chrome Version</label>
-                    <div className="mt-1 p-2 bg-gray-100 rounded">{chromeInfo.chromeVersion || "Not detected"}</div>
+                    <label className="block text-sm font-medium text-gray-700">
+                      Chrome Version
+                    </label>
+                    <div className="mt-1 p-2 bg-gray-100 rounded">
+                      {chromeInfo.chromeVersion || "Not detected"}
+                    </div>
                   </div>
                   <div>
-                    <label className="block text-sm font-medium text-gray-700">ChromeDriver Version</label>
-                    <div className="mt-1 p-2 bg-gray-100 rounded">{chromeInfo.driverVersion || "Not downloaded"}</div>
+                    <label className="block text-sm font-medium text-gray-700">
+                      ChromeDriver Version
+                    </label>
+                    <div className="mt-1 p-2 bg-gray-100 rounded">
+                      {chromeInfo.driverVersion || "Not downloaded"}
+                    </div>
                   </div>
                 </div>
               )}
 
               <div className="mt-6 flex justify-between">
                 <button
-                  onClick={onReDownload}
+                  onClick={onOpenShopee}
                   disabled={infoLoading}
-                  className="px-4 py-2 bg-red-600 text-white rounded disabled:opacity-50"
+                  className="px-4 py-2 bg-orange-600 text-white rounded disabled:opacity-50"
                 >
-                  Re-download
+                  Open Shopee
                 </button>
                 <button
-                  onClick={onOpenBrowser}
+                  onClick={onOpenTokopedia}
                   disabled={infoLoading}
                   className="px-4 py-2 bg-blue-600 text-white rounded disabled:opacity-50"
                 >
-                  Open Chrome
+                  Open Tokopedia
                 </button>
               </div>
             </div>
@@ -203,13 +253,17 @@ function App() {
         )}
 
         <div className="mt-4">
-          <label className="block text-sm text-gray-600">Nama produk (bisa lebih dari satu)</label>
+          <label className="block text-sm text-gray-600">
+            Nama produk (bisa lebih dari satu)
+          </label>
           <div className="mt-2">
             <div className="flex flex-wrap items-center">
               {tags.map((t, i) => (
                 <span key={i} className="tag">
                   {t}
-                  <button onClick={() => removeTag(i)} className="ml-2">×</button>
+                  <button onClick={() => removeTag(i)} className="ml-2">
+                    ×
+                  </button>
                 </span>
               ))}
               <input
@@ -220,7 +274,11 @@ function App() {
                   if (e.key === "Enter" || e.key === ",") {
                     e.preventDefault();
                     addTagFromInput();
-                  } else if (e.key === "Backspace" && input === "" && tags.length > 0) {
+                  } else if (
+                    e.key === "Backspace" &&
+                    input === "" &&
+                    tags.length > 0
+                  ) {
                     removeTag(tags.length - 1);
                   }
                 }}
@@ -243,7 +301,12 @@ function App() {
               </select>
             </div>
             <div>
-              <button onClick={onSearch} className="mt-5 sm:mt-6 px-4 py-2 bg-blue-600 text-white rounded">Cari</button>
+              <button
+                onClick={onSearch}
+                className="mt-5 sm:mt-6 px-4 py-2 bg-blue-600 text-white rounded"
+              >
+                Cari
+              </button>
             </div>
           </div>
         </div>
@@ -251,11 +314,20 @@ function App() {
         <div className="mt-6">
           <h3 className="text-lg font-medium">Hasil</h3>
           <div className="mt-3">
-            {loading && <p className="text-sm text-gray-500">Mencari... tunggu sebentar</p>}
-            {!loading && results.length === 0 && <p className="text-sm text-gray-500">Belum ada hasil</p>}
+            {loading && (
+              <p className="text-sm text-gray-500">
+                Mencari... tunggu sebentar
+              </p>
+            )}
+            {!loading && results.length === 0 && (
+              <p className="text-sm text-gray-500">Belum ada hasil</p>
+            )}
             {results.map((shop, sIdx) => {
               // determine if this shop has products for every query
-              const allFound = shop.results && shop.results.length > 0 && shop.results.every(r => (r.products && r.products.length > 0));
+              const allFound =
+                shop.results &&
+                shop.results.length > 0 &&
+                shop.results.every((r) => r.products && r.products.length > 0);
               const isShopExpanded = expandedShops[sIdx] || false;
 
               return (
@@ -265,99 +337,142 @@ function App() {
                     onClick={() => toggleShop(sIdx)}
                   >
                     <h4 className="shop-name">
-                      {shop.shop_name} - {shop.platform === 'tokopedia' ? 'Tokopedia' : 'Shopee'} ({shop.results ? shop.results.length : 0} queries)
+                      {shop.shop_name} -{" "}
+                      {shop.platform === "tokopedia" ? "Tokopedia" : "Shopee"} (
+                      {shop.results ? shop.results.length : 0} queries)
                     </h4>
                     <div className="flex items-center gap-3">
-                      {allFound && <div className="badge bg-green-100 text-green-800 text-sm px-2 py-1 rounded">Semua produk ditemukan</div>}
-                      <svg className={`expandable-icon ${isShopExpanded ? 'rotated' : ''}`}
+                      {allFound && (
+                        <div className="badge bg-green-100 text-green-800 text-sm px-2 py-1 rounded">
+                          Semua produk ditemukan
+                        </div>
+                      )}
+                      <svg
+                        className={`expandable-icon ${isShopExpanded ? "rotated" : ""}`}
                         width="16"
                         height="16"
                         fill="currentColor"
-                        viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg">
-                        <path d="M6 8L2 8L2 6L8 5.24536e-07L14 6L14 8L10 8L10 16L6 16L6 8Z" fill="#000000" />
+                        viewBox="0 0 16 16"
+                        xmlns="http://www.w3.org/2000/svg"
+                      >
+                        <path
+                          d="M6 8L2 8L2 6L8 5.24536e-07L14 6L14 8L10 8L10 16L6 16L6 8Z"
+                          fill="#000000"
+                        />
                       </svg>
                     </div>
                   </div>
 
-                  <div className={`expandable-content ${isShopExpanded ? 'expanded' : 'collapsed'}`}>
+                  <div
+                    className={`expandable-content ${isShopExpanded ? "expanded" : "collapsed"}`}
+                  >
                     <div className="shop-details">
                       <div className="mb-2">
-                        <a href={shop.shop_url} target="_blank" rel="noreferrer" className="text-blue-600 text-sm hover:underline">
+                        <a
+                          href={shop.shop_url}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-blue-600 text-sm hover:underline"
+                        >
                           {shop.shop_url}
                         </a>
                       </div>
 
-                      {shop.results && shop.results.map((qr, qIdx) => {
-                        const key = `${sIdx}-${qIdx}`;
-                        const isQueryExpanded = expandedQueries[key] || false;
-                        const hasProducts = qr.products && qr.products.length > 0;
+                      {shop.results &&
+                        shop.results.map((qr, qIdx) => {
+                          const key = `${sIdx}-${qIdx}`;
+                          const isQueryExpanded = expandedQueries[key] || false;
+                          const hasProducts =
+                            qr.products && qr.products.length > 0;
 
-                        return (
-                          <div key={qIdx} className="query-item">
-                            <div
-                              className="query-summary"
-                              onClick={() => toggleQuery(sIdx, qIdx)}
-                            >
-                              <div className="flex items-center gap-2">
-                                <span className="query-pill text-sm">{qr.query}</span>
-                                <span className="query-count text-sm text-gray-500">
-                                  ({qr.products ? qr.products.length : 0} products)
-                                </span>
-                              </div>
-                              <svg
-                                className={`expandable-icon ${isQueryExpanded ? 'rotated' : ''}`}
-                                width="12"
-                                height="12"
-                                fill="currentColor"
-                                viewBox="0 0 16 16"
+                          return (
+                            <div key={qIdx} className="query-item">
+                              <div
+                                className="query-summary"
+                                onClick={() => toggleQuery(sIdx, qIdx)}
                               >
-                                <path d="M6 8L2 8L2 6L8 5.24536e-07L14 6L14 8L10 8L10 16L6 16L6 8Z" fill="#000000" />
-                              </svg>
-                            </div>
-
-                            {isQueryExpanded && (
-                              <div className="query-products">
-                                {!hasProducts ? (
-                                  <p className="no-results">Tidak ada hasil</p>
-                                ) : (
-                                  <div className="product-list">
-                                    {qr.products.map((p, pIdx) => {
-                                      const img = p.photo || p.image || p.thumbnail || (p.photos && p.photos[0]) || null;
-                                      return (
-                                        <div key={pIdx} className="product-item">
-                                          {img ? (
-                                            <img
-                                              src={img}
-                                              alt={p.name || 'product'}
-                                              className="product-image-thumb"
-                                            />
-                                          ) : (
-                                            <div className="product-image-thumb bg-gray-200 flex items-center justify-center text-xs text-gray-500">
-                                              No Image
-                                            </div>
-                                          )}
-                                          <div className="product-info">
-                                            <div className="product-title">{p.name || p.link}</div>
-                                            {p.price && <div className="product-price text-green-600 text-sm">{p.price}</div>}
-                                            <a
-                                              href={p.link}
-                                              target="_blank"
-                                              rel="noreferrer"
-                                              className="product-link-text"
-                                            >
-                                              View Product
-                                            </a>
-                                          </div>
-                                        </div>
-                                      );
-                                    })}
-                                  </div>
-                                )}
+                                <div className="flex items-center gap-2">
+                                  <span className="query-pill text-sm">
+                                    {qr.query}
+                                  </span>
+                                  <span className="query-count text-sm text-gray-500">
+                                    ({qr.products ? qr.products.length : 0}{" "}
+                                    products)
+                                  </span>
+                                </div>
+                                <svg
+                                  className={`expandable-icon ${isQueryExpanded ? "rotated" : ""}`}
+                                  width="12"
+                                  height="12"
+                                  fill="currentColor"
+                                  viewBox="0 0 16 16"
+                                >
+                                  <path
+                                    d="M6 8L2 8L2 6L8 5.24536e-07L14 6L14 8L10 8L10 16L6 16L6 8Z"
+                                    fill="#000000"
+                                  />
+                                </svg>
                               </div>
-                            )}
-                          </div>
-                        );
-                      })}
+
+                              {isQueryExpanded && (
+                                <div className="query-products">
+                                  {!hasProducts ? (
+                                    <p className="no-results">
+                                      Tidak ada hasil
+                                    </p>
+                                  ) : (
+                                    <div className="product-list">
+                                      {qr.products.map((p, pIdx) => {
+                                        const img =
+                                          p.photo ||
+                                          p.image ||
+                                          p.thumbnail ||
+                                          (p.photos && p.photos[0]) ||
+                                          null;
+                                        return (
+                                          <div
+                                            key={pIdx}
+                                            className="product-item"
+                                          >
+                                            {img ? (
+                                              <img
+                                                src={img}
+                                                alt={p.name || "product"}
+                                                className="product-image-thumb"
+                                              />
+                                            ) : (
+                                              <div className="product-image-thumb bg-gray-200 flex items-center justify-center text-xs text-gray-500">
+                                                No Image
+                                              </div>
+                                            )}
+                                            <div className="product-info">
+                                              <div className="product-title">
+                                                {p.name || p.link}
+                                              </div>
+                                              {p.price && (
+                                                <div className="product-price text-green-600 text-sm">
+                                                  {p.price}
+                                                </div>
+                                              )}
+                                              <a
+                                                href={p.link}
+                                                target="_blank"
+                                                rel="noreferrer"
+                                                className="product-link-text"
+                                              >
+                                                View Product
+                                              </a>
+                                            </div>
+                                          </div>
+                                        );
+                                      })}
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
                     </div>
                   </div>
                 </div>
@@ -365,7 +480,6 @@ function App() {
             })}
           </div>
         </div>
-
       </div>
     </div>
   );
