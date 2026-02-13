@@ -18,6 +18,8 @@ function App() {
   const [expandedQueries, setExpandedQueries] = useState({}); // Track expanded queries
   const [selectedPlatform, setSelectedPlatform] = useState("tokopedia"); // Default to tokopedia
   const [showCopyNotification, setShowCopyNotification] = useState(false); // Track copy notification
+  const [chromeProfilePath, setChromeProfilePath] = useState(""); // Chrome profile path
+  const [profileSaving, setProfileSaving] = useState(false); // Track save state
   const inputRef = useRef(null);
   const listenersRef = useRef([]);
 
@@ -106,6 +108,29 @@ function App() {
     // Show modal instead of opening folder directly
     setShowDriverModal(true);
     loadChromeInfo();
+    loadChromeProfilePath();
+  }
+
+  async function loadChromeProfilePath() {
+    try {
+      const path = await invoke("get_chrome_profile_path");
+      setChromeProfilePath(path || "");
+    } catch (e) {
+      console.error("Failed to load Chrome profile path:", e);
+    }
+  }
+
+  async function saveChromeProfilePath() {
+    try {
+      setProfileSaving(true);
+      await invoke("set_chrome_profile_path", { path: chromeProfilePath });
+      alert("Chrome profile path saved successfully!");
+    } catch (e) {
+      console.error(e);
+      alert("Failed to save Chrome profile path: " + String(e));
+    } finally {
+      setProfileSaving(false);
+    }
   }
 
   async function onReDownload() {
@@ -234,6 +259,41 @@ function App() {
                   </div>
                 )}
 
+                <div className="info-grid" style={{ marginTop: '20px' }}>
+                  <div className="info-item">
+                    <label className="info-label">Chrome Profile Path</label>
+                    <div style={{ marginBottom: '8px' }}>
+                      <input
+                        type="text"
+                        value={chromeProfilePath}
+                        onChange={(e) => setChromeProfilePath(e.target.value)}
+                        placeholder="C:\Users\YourName\AppData\Local\Google\Chrome\User Data\Profile 1"
+                        className="form-select"
+                        style={{ width: '100%', marginBottom: '8px' }}
+                      />
+                      <button
+                        onClick={saveChromeProfilePath}
+                        disabled={profileSaving || !chromeProfilePath.trim()}
+                        className="btn-primary"
+                        style={{ width: '100%' }}
+                      >
+                        {profileSaving ? 'Saving...' : 'Save Profile Path'}
+                      </button>
+                    </div>
+                    <div className="warning-box" style={{ marginTop: '12px', fontSize: '13px' }}>
+                      <div className="warning-content">
+                        <strong>Cara mendapatkan Profile Path:</strong>
+                        <ol style={{ marginTop: '8px', marginBottom: '0', paddingLeft: '20px' }}>
+                          <li>Buka Chrome dan ketik <code style={{ background: '#f0f0f0', padding: '2px 6px', borderRadius: '3px' }}>chrome://version</code> di address bar</li>
+                          <li>Cari baris <strong>"Profile Path"</strong></li>
+                          <li>Copy path tersebut dan paste di input di atas</li>
+                          <li><em>Disarankan:</em> Buat profile Chrome baru khusus untuk scraping</li>
+                        </ol>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
                 <div className="modal-actions">
                   <button
                     onClick={onOpenShopee}
@@ -248,6 +308,13 @@ function App() {
                     className="btn-primary"
                   >
                     Open Tokopedia
+                  </button>
+                  <button
+                    onClick={onReDownload}
+                    disabled={infoLoading}
+                    className="btn-secondary"
+                  >
+                    Re-Download Driver
                   </button>
                 </div>
               </div>

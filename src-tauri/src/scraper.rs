@@ -1,6 +1,7 @@
 use log::info;
 use rand::Rng;
 use std::path::PathBuf;
+use std::fs;
 use tauri::Emitter;
 use thirtyfour::prelude::*;
 use tokio::time::{sleep, Duration};
@@ -8,6 +9,21 @@ use tokio::time::{sleep, Duration};
 use crate::chromedriver::ensure_chromedriver;
 use crate::models::{Product, QueryResult, ShopResults};
 // Legacy platform functions - using original logic
+
+// Helper function to get Chrome profile path from config
+fn get_chrome_profile_path() -> String {
+    let config_dir = match dirs::config_dir() {
+        Some(dir) => dir,
+        None => return String::new(),
+    };
+    let config_file = config_dir.join("satu-toko").join("chrome_profile.txt");
+    
+    if config_file.exists() {
+        fs::read_to_string(config_file).unwrap_or_default()
+    } else {
+        String::new()
+    }
+}
 
 pub async fn scrape_products(
     window: tauri::Window,
@@ -44,10 +60,14 @@ pub async fn scrape_products(
 
     // Connect to chromedriver
     let mut caps = DesiredCapabilities::chrome();
-    caps.add_chrome_arg(
-        "--user-data-dir=C:\\Users\\bagus\\AppData\\Local\\Google\\Chrome\\User Data\\Profile 1",
-    )
-    .unwrap();
+    
+    // Get Chrome profile path from config
+    let profile_path = get_chrome_profile_path();
+    if !profile_path.is_empty() {
+        caps.add_chrome_arg(&format!("--user-data-dir={}", profile_path))
+            .unwrap();
+    }
+    
     caps.set_no_sandbox().unwrap();
     caps.set_disable_dev_shm_usage().unwrap();
     caps.add_chrome_arg("--disable-blink-features=AutomationControlled")
@@ -454,10 +474,14 @@ pub async fn open_chrome_with_driver() -> Result<(WebDriver, std::process::Child
 
     // Connect to chromedriver
     let mut caps = DesiredCapabilities::chrome();
-    caps.add_chrome_arg(
-        "--user-data-dir=C:\\Users\\bagus\\AppData\\Local\\Google\\Chrome\\User Data\\Profile 1",
-    )
-    .unwrap();
+    
+    // Get Chrome profile path from config
+    let profile_path = get_chrome_profile_path();
+    if !profile_path.is_empty() {
+        caps.add_chrome_arg(&format!("--user-data-dir={}", profile_path))
+            .unwrap();
+    }
+    
     caps.set_no_sandbox().unwrap();
     caps.set_disable_dev_shm_usage().unwrap();
     caps.add_chrome_arg("--disable-blink-features=AutomationControlled")

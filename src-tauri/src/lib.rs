@@ -2,6 +2,7 @@
 // This file contains Tauri commands and re-exports from other modules
 
 use tauri_plugin_log::{Target, TargetKind};
+use std::fs;
 
 // Import modules
 mod chromedriver;
@@ -89,6 +90,36 @@ async fn open_chrome_with_driver(url: String) -> Result<String, String> {
     final_result
 }
 
+#[tauri::command]
+fn get_chrome_profile_path() -> Result<String, String> {
+    let config_dir = dirs::config_dir()
+        .ok_or("Could not determine config directory")?;
+    let config_file = config_dir.join("satu-toko").join("chrome_profile.txt");
+    
+    if config_file.exists() {
+        fs::read_to_string(config_file)
+            .map_err(|e| format!("Failed to read config: {}", e))
+    } else {
+        Ok(String::new())
+    }
+}
+
+#[tauri::command]
+fn set_chrome_profile_path(path: String) -> Result<(), String> {
+    let config_dir = dirs::config_dir()
+        .ok_or("Could not determine config directory")?;
+    let satu_toko_dir = config_dir.join("satu-toko");
+    
+    fs::create_dir_all(&satu_toko_dir)
+        .map_err(|e| format!("Failed to create config directory: {}", e))?;
+    
+    let config_file = satu_toko_dir.join("chrome_profile.txt");
+    fs::write(config_file, path)
+        .map_err(|e| format!("Failed to write config: {}", e))?;
+    
+    Ok(())
+}
+
 pub fn run() {
     tauri::Builder::default()
         .plugin(
@@ -108,7 +139,9 @@ pub fn run() {
             scrape_products,
             get_chrome_and_driver_info,
             redownload_chromedriver,
-            open_chrome_with_driver
+            open_chrome_with_driver,
+            get_chrome_profile_path,
+            set_chrome_profile_path
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
