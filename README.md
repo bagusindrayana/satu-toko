@@ -19,7 +19,7 @@ This template should help get you started developing with Tauri and React in Vit
 ## Fitur
 - [x] Pencarian
 - [x] Print dan Export ke Excel
-- [] Histori Pencarian
+- [x] Histori Pencarian (tersimpan di localStorage, bisa load kembali)
 - [] Filter
 - [] Paginasi
 - [] Auto Add Cart?

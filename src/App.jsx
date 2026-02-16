@@ -20,8 +20,23 @@ function App() {
   const [showCopyNotification, setShowCopyNotification] = useState(false); // Track copy notification
   const [chromeProfilePath, setChromeProfilePath] = useState(""); // Chrome profile path
   const [profileSaving, setProfileSaving] = useState(false); // Track save state
+  const [showHistoryModal, setShowHistoryModal] = useState(false); // History modal state
+  const [searchHistory, setSearchHistory] = useState([]); // Search history data
   const inputRef = useRef(null);
   const listenersRef = useRef([]);
+  const HISTORY_STORAGE_KEY = "satu-toko-search-history";
+
+  // Load search history from localStorage on mount
+  useEffect(() => {
+    try {
+      const savedHistory = localStorage.getItem(HISTORY_STORAGE_KEY);
+      if (savedHistory) {
+        setSearchHistory(JSON.parse(savedHistory));
+      }
+    } catch (e) {
+      console.error("Failed to load search history:", e);
+    }
+  }, []);
 
   useEffect(() => {
     let unlistenProgress = null;
@@ -70,6 +85,69 @@ function App() {
     setTags((t) => t.filter((_, i) => i !== idx));
   }
 
+  // Save search history to localStorage
+  const saveSearchHistory = (queries, platform, results) => {
+    try {
+      const totalResults = results.reduce((sum, shop) => {
+        return (
+          sum +
+          (shop.results
+            ? shop.results.reduce(
+                (s, r) => s + (r.products ? r.products.length : 0),
+                0,
+              )
+            : 0)
+        );
+      }, 0);
+
+      const newEntry = {
+        id: Date.now(),
+        timestamp: new Date().toISOString(),
+        queries: [...queries],
+        platform,
+        resultCount: totalResults,
+        results: results, // Store full results data
+      };
+
+      const updatedHistory = [newEntry, ...searchHistory].slice(0, 20); // Keep last 20 searches (karena data besar)
+      setSearchHistory(updatedHistory);
+      localStorage.setItem(HISTORY_STORAGE_KEY, JSON.stringify(updatedHistory));
+    } catch (e) {
+      console.error("Failed to save search history:", e);
+    }
+  };
+
+  // Load a history entry
+  const loadHistoryEntry = (entry) => {
+    setTags(entry.queries);
+    setSelectedPlatform(entry.platform);
+    setResults(entry.results || []); // Load full results
+    setExpandedShops({}); // Reset expanded state
+    setExpandedQueries({}); // Reset expanded queries
+    setShowHistoryModal(false);
+  };
+
+  // Delete a history entry
+  const deleteHistoryEntry = (id) => {
+    try {
+      const updatedHistory = searchHistory.filter((entry) => entry.id !== id);
+      setSearchHistory(updatedHistory);
+      localStorage.setItem(HISTORY_STORAGE_KEY, JSON.stringify(updatedHistory));
+    } catch (e) {
+      console.error("Failed to delete history entry:", e);
+    }
+  };
+
+  // Clear all history
+  const clearAllHistory = () => {
+    try {
+      setSearchHistory([]);
+      localStorage.removeItem(HISTORY_STORAGE_KEY);
+    } catch (e) {
+      console.error("Failed to clear history:", e);
+    }
+  };
+
   async function onSearch() {
     if (tags.length === 0) return;
     setResults([]);
@@ -81,6 +159,8 @@ function App() {
         platform: selectedPlatform,
       });
       setResults(res);
+      // Save to history after successful search (with full results data)
+      saveSearchHistory(tags, selectedPlatform, res);
       setLoading(false);
     } catch (e) {
       console.error(e);
@@ -202,8 +282,8 @@ function App() {
         setShowCopyNotification(false);
       }, 2000); // Hide notification after 2 seconds
     } catch (err) {
-      console.error('Failed to copy:', err);
-      alert('Gagal menyalin link');
+      console.error("Failed to copy:", err);
+      alert("Gagal menyalin link");
     }
   };
 
@@ -232,7 +312,7 @@ function App() {
       alert(`File berhasil disimpan di:\n${filePath}`);
 
       // Open the folder containing the file
-      const folderPath = filePath.substring(0, filePath.lastIndexOf('\\'));
+      const folderPath = filePath.substring(0, filePath.lastIndexOf("\\"));
       await invoke("open_file_with_default_app", { path: folderPath });
     } catch (e) {
       console.error(e);
@@ -247,30 +327,231 @@ function App() {
         <div className="title-bar">
           <div className="title-bar-content">
             <h1 className="app-title">Satu Toko — Scraper</h1>
-            <div style={{ display: 'flex', gap: '8px' }}>
+            <div style={{ display: "flex", gap: "8px" }}>
+              <button
+                onClick={() => setShowHistoryModal(true)}
+                className="btn-secondary"
+                style={{ fontSize: "14px", padding: "6px 12px" }}
+              >
+                Riwayat Pencarian
+              </button>
               <button
                 onClick={onOpenShopee}
                 className="btn-primary"
-                style={{ fontSize: '14px', padding: '6px 12px' }}
+                style={{ fontSize: "14px", padding: "6px 12px" }}
               >
                 Open Shopee
               </button>
               <button
                 onClick={onOpenTokopedia}
                 className="btn-primary"
-                style={{ fontSize: '14px', padding: '6px 12px' }}
+                style={{ fontSize: "14px", padding: "6px 12px" }}
               >
                 Open Tokopedia
               </button>
-              <button
-                onClick={onOpenDriver}
-                className="btn-secondary"
-              >
+              <button onClick={onOpenDriver} className="btn-secondary">
                 Chromedriver Setting
               </button>
             </div>
           </div>
         </div>
+
+        {/* History Modal */}
+        {showHistoryModal && (
+          <div className="modal-overlay">
+            <div
+              className="modal-window"
+              style={{ maxWidth: "600px", maxHeight: "80vh" }}
+            >
+              <div className="modal-header">
+                <h3 className="modal-title">📜 Riwayat Pencarian</h3>
+                <button
+                  onClick={() => setShowHistoryModal(false)}
+                  className="btn-close"
+                >
+                  ×
+                </button>
+              </div>
+
+              <div
+                className="modal-body"
+                style={{ maxHeight: "60vh", overflowY: "auto" }}
+              >
+                {searchHistory.length === 0 ? (
+                  <div className="text-center text-gray-500 py-8">
+                    <p>Belum ada riwayat pencarian</p>
+                  </div>
+                ) : (
+                  <div className="history-list">
+                    {searchHistory.map((entry) => (
+                      <div
+                        key={entry.id}
+                        className="history-item"
+                        style={{
+                          border: "1px solid #e5e7eb",
+                          borderRadius: "8px",
+                          padding: "12px",
+                          marginBottom: "12px",
+                          backgroundColor: "#f9fafb",
+                        }}
+                      >
+                        <div
+                          style={{
+                            display: "flex",
+                            justifyContent: "space-between",
+                            alignItems: "flex-start",
+                            marginBottom: "8px",
+                          }}
+                        >
+                          <div>
+                            <span
+                              style={{
+                                backgroundColor:
+                                  entry.platform === "tokopedia"
+                                    ? "#00aa5b"
+                                    : "#ee4d2d",
+                                color: "white",
+                                padding: "2px 8px",
+                                borderRadius: "4px",
+                                fontSize: "12px",
+                                fontWeight: "bold",
+                                textTransform: "uppercase",
+                              }}
+                            >
+                              {entry.platform}
+                            </span>
+                            <span
+                              style={{
+                                marginLeft: "8px",
+                                fontSize: "12px",
+                                color: "#6b7280",
+                              }}
+                            >
+                              {new Date(entry.timestamp).toLocaleString(
+                                "id-ID",
+                              )}
+                            </span>
+                          </div>
+                          <button
+                            onClick={() => deleteHistoryEntry(entry.id)}
+                            style={{
+                              background: "none",
+                              border: "none",
+                              color: "#ef4444",
+                              cursor: "pointer",
+                              fontSize: "18px",
+                              padding: "0 4px",
+                            }}
+                            title="Hapus"
+                          >
+                            ×
+                          </button>
+                        </div>
+
+                        <div style={{ marginBottom: "8px" }}>
+                          <strong>Keywords:</strong>{" "}
+                          {entry.queries.map((q, i) => (
+                            <span
+                              key={i}
+                              style={{
+                                backgroundColor: "#e5e7eb",
+                                padding: "2px 8px",
+                                borderRadius: "4px",
+                                fontSize: "12px",
+                                marginRight: "4px",
+                              }}
+                            >
+                              {q}
+                            </span>
+                          ))}
+                        </div>
+
+                        <div style={{ marginBottom: "8px" }}>
+                          <span style={{ fontSize: "13px", color: "#6b7280" }}>
+                            {entry.resultCount} produk •{" "}
+                            {entry.results?.length || 0} toko
+                          </span>
+                        </div>
+
+                        {/* Preview shops */}
+                        {entry.results && entry.results.length > 0 && (
+                          <div
+                            style={{ marginBottom: "8px", fontSize: "12px" }}
+                          >
+                            <strong>Toko:</strong>
+                            <div style={{ marginTop: "4px" }}>
+                              {entry.results.slice(0, 3).map((shop, idx) => (
+                                <span
+                                  key={idx}
+                                  style={{
+                                    display: "inline-block",
+                                    backgroundColor: "#dbeafe",
+                                    color: "#1e40af",
+                                    padding: "1px 6px",
+                                    borderRadius: "4px",
+                                    fontSize: "11px",
+                                    marginRight: "4px",
+                                    marginBottom: "4px",
+                                  }}
+                                >
+                                  {shop.shop_name}
+                                </span>
+                              ))}
+                              {entry.results.length > 3 && (
+                                <span
+                                  style={{
+                                    fontSize: "11px",
+                                    color: "#6b7280",
+                                  }}
+                                >
+                                  +{entry.results.length - 3} lainnya
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        )}
+
+                        <div
+                          style={{
+                            display: "flex",
+                            justifyContent: "flex-end",
+                          }}
+                        >
+                          <button
+                            onClick={() => loadHistoryEntry(entry)}
+                            className="btn-primary"
+                            style={{ fontSize: "13px", padding: "4px 12px" }}
+                          >
+                            📂 Load Hasil
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {searchHistory.length > 0 && (
+                  <div
+                    className="modal-actions"
+                    // style={{
+                    //   borderTop: "1px solid #e5e7eb",
+                    //   paddingTop: "16px",
+                    //   marginTop: "16px",
+                    // }}
+                  >
+                    <button
+                      onClick={clearAllHistory}
+                      className="btn-secondary"
+                      style={{ width: "100%", color: "#ef4444" }}
+                    >
+                      🗑️ Hapus Semua Riwayat
+                    </button>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Driver Info Modal */}
         {showDriverModal && (
@@ -278,10 +559,7 @@ function App() {
             <div className="modal-window">
               <div className="modal-header">
                 <h3 className="modal-title">Chromedriver Setting</h3>
-                <button
-                  onClick={closeModal}
-                  className="btn-close"
-                >
+                <button onClick={closeModal} className="btn-close">
                   ×
                 </button>
               </div>
@@ -308,35 +586,61 @@ function App() {
                   </div>
                 )}
 
-                <div className="info-grid" style={{ marginTop: '20px' }}>
+                <div className="info-grid" style={{ marginTop: "20px" }}>
                   <div className="info-item">
                     <label className="info-label">Chrome Profile Path</label>
-                    <div style={{ marginBottom: '8px' }}>
+                    <div style={{ marginBottom: "8px" }}>
                       <input
                         type="text"
                         value={chromeProfilePath}
                         onChange={(e) => setChromeProfilePath(e.target.value)}
                         placeholder="C:\Users\YourName\AppData\Local\Google\Chrome\User Data\Profile 1"
                         className="form-select"
-                        style={{ width: '100%', marginBottom: '8px' }}
+                        style={{ width: "100%", marginBottom: "8px" }}
                       />
                       <button
                         onClick={saveChromeProfilePath}
                         disabled={profileSaving || !chromeProfilePath.trim()}
                         className="btn-primary"
-                        style={{ width: '100%' }}
+                        style={{ width: "100%" }}
                       >
-                        {profileSaving ? 'Saving...' : 'Save Profile Path'}
+                        {profileSaving ? "Saving..." : "Save Profile Path"}
                       </button>
                     </div>
-                    <div className="warning-box" style={{ marginTop: '12px', fontSize: '13px' }}>
+                    <div
+                      className="warning-box"
+                      style={{ marginTop: "12px", fontSize: "13px" }}
+                    >
                       <div className="warning-content">
                         <strong>Cara mendapatkan Profile Path:</strong>
-                        <ol style={{ marginTop: '8px', marginBottom: '0', paddingLeft: '20px' }}>
-                          <li>Buka Chrome dan ketik <code style={{ background: '#f0f0f0', padding: '2px 6px', borderRadius: '3px' }}>chrome://version</code> di address bar</li>
-                          <li>Cari baris <strong>"Profile Path"</strong></li>
+                        <ol
+                          style={{
+                            marginTop: "8px",
+                            marginBottom: "0",
+                            paddingLeft: "20px",
+                          }}
+                        >
+                          <li>
+                            Buka Chrome dan ketik{" "}
+                            <code
+                              style={{
+                                background: "#f0f0f0",
+                                padding: "2px 6px",
+                                borderRadius: "3px",
+                              }}
+                            >
+                              chrome://version
+                            </code>{" "}
+                            di address bar
+                          </li>
+                          <li>
+                            Cari baris <strong>"Profile Path"</strong>
+                          </li>
                           <li>Copy path tersebut dan paste di input di atas</li>
-                          <li><em>Disarankan:</em> Buat profile Chrome baru khusus untuk scraping</li>
+                          <li>
+                            <em>Disarankan:</em> Buat profile Chrome baru khusus
+                            untuk scraping
+                          </li>
                         </ol>
                       </div>
                     </div>
@@ -348,7 +652,7 @@ function App() {
                     onClick={onReDownload}
                     disabled={infoLoading}
                     className="btn-secondary"
-                    style={{ width: '100%' }}
+                    style={{ width: "100%" }}
                   >
                     Re-Download Driver
                   </button>
@@ -360,7 +664,9 @@ function App() {
 
         <div className="content-section">
           <div className="form-group">
-            <label className="form-label">Nama produk (bisa lebih dari satu)</label>
+            <label className="form-label">
+              Nama produk (bisa lebih dari satu)
+            </label>
             <div className="tag-input">
               {tags.map((t, i) => (
                 <span key={i} className="tag">
@@ -423,7 +729,8 @@ function App() {
                 <strong>Perhatian untuk Platform Shopee</strong>
                 <p>
                   Untuk menggunakan Shopee, Anda harus login terlebih dahulu.
-                  Klik tombol "Open shopee" di pojok kanan atas, browser chrome akan terbuka dan akan diarahkan ke halaman login shopee.
+                  Klik tombol "Open shopee" di pojok kanan atas, browser chrome
+                  akan terbuka dan akan diarahkan ke halaman login shopee.
                 </p>
               </div>
             </div>
@@ -435,18 +742,18 @@ function App() {
 
           {/* Action buttons - only show when there are results */}
           {!loading && results.length > 0 && (
-            <div style={{ display: 'flex', gap: '8px', marginBottom: '16px' }}>
+            <div style={{ display: "flex", gap: "8px", marginBottom: "16px" }}>
               <button
                 onClick={handlePrint}
                 className="btn-secondary"
-                style={{ fontSize: '14px', padding: '8px 16px' }}
+                style={{ fontSize: "14px", padding: "8px 16px" }}
               >
                 🖨️ Print
               </button>
               <button
                 onClick={handleExportExcel}
                 className="btn-secondary"
-                style={{ fontSize: '14px', padding: '8px 16px' }}
+                style={{ fontSize: "14px", padding: "8px 16px" }}
               >
                 📊 Export to Excel
               </button>
@@ -478,7 +785,13 @@ function App() {
                   >
                     <h4 className="shop-name">
                       {shop.shop_name} -{" "}
-                      {shop.platform === "tokopedia" ? "Tokopedia" : "Shopee"} ({shop.results ? shop.results.filter((r) => r.products && r.products.length > 0).length : 0}/{shop.results ? shop.results.length : 0})
+                      {shop.platform === "tokopedia" ? "Tokopedia" : "Shopee"} (
+                      {shop.results
+                        ? shop.results.filter(
+                            (r) => r.products && r.products.length > 0,
+                          ).length
+                        : 0}
+                      /{shop.results ? shop.results.length : 0})
                     </h4>
                     <div className="flex items-center gap-3">
                       {allFound && (
@@ -599,7 +912,9 @@ function App() {
                                                 target="_blank"
                                                 rel="noreferrer"
                                                 className="product-link-text"
-                                                onClick={(e) => handleCopyLink(e, p.link)}
+                                                onClick={(e) =>
+                                                  handleCopyLink(e, p.link)
+                                                }
                                               >
                                                 View Product
                                               </a>
@@ -625,9 +940,7 @@ function App() {
 
       {/* Copy Notification Popup */}
       {showCopyNotification && (
-        <div className="notification">
-          ✓ Link berhasil disalin!
-        </div>
+        <div className="notification">✓ Link berhasil disalin!</div>
       )}
     </div>
   );
