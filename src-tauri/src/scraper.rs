@@ -29,6 +29,7 @@ pub async fn scrape_products(
     window: tauri::Window,
     queries: Vec<String>,
     platform: String,
+    limit: usize,
 ) -> Result<Vec<ShopResults>, String> {
     // Check chromedriver
     let driver_path = ensure_chromedriver().await.map_err(|e| e.to_string())?;
@@ -86,19 +87,19 @@ pub async fn scrape_products(
     // Use platform-specific scrapers
     match platform.as_str() {
         "tokopedia" => {
-            let results = crate::platforms::TokopediaScraper::scrape(&driver, &queries, &window).await?;
+            let results = crate::platforms::TokopediaScraper::scrape(&driver, &queries, &window, limit).await?;
             all_results.extend(results);
         }
         "shopee" => {
-            let results = crate::platforms::ShopeeScraper::scrape(&driver, &queries, &window).await?;
+            let results = crate::platforms::ShopeeScraper::scrape(&driver, &queries, &window, limit).await?;
             all_results.extend(results);
         }
         "all" => {
             // Scrape both platforms
-            let tokopedia_results = crate::platforms::TokopediaScraper::scrape(&driver, &queries, &window).await?;
+            let tokopedia_results = crate::platforms::TokopediaScraper::scrape(&driver, &queries, &window, limit).await?;
             all_results.extend(tokopedia_results);
 
-            let shopee_results = crate::platforms::ShopeeScraper::scrape(&driver, &queries, &window).await?;
+            let shopee_results = crate::platforms::ShopeeScraper::scrape(&driver, &queries, &window, limit).await?;
             all_results.extend(shopee_results);
         }
         _ => return Err("Unsupported platform".to_string()),

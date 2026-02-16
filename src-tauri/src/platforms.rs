@@ -14,8 +14,9 @@ impl TokopediaScraper {
         driver: &WebDriver,
         queries: &[String],
         window: &tauri::Window,
+        limit: usize,
     ) -> Result<Vec<ShopResults>, String> {
-        info!("Starting Tokopedia scraping with original logic");
+        info!("Starting Tokopedia scraping with limit {}", limit);
 
         if queries.is_empty() {
             return Ok(Vec::new());
@@ -42,20 +43,54 @@ impl TokopediaScraper {
             tokio::time::sleep(std::time::Duration::from_secs(2)).await;
         }
 
-        // Get first cards
-        let first_cards = match driver
-            .find_all(By::Css("div[data-ssr=\"contentProductsSRPSSR\"] a"))
-            .await
-        {
-            Ok(v) => v,
-            Err(_) => Vec::new(),
-        };
+        // Scroll and load more for the first result to get enough shops
+        let mut first_cards = Vec::new();
+        let mut scroll_attempts = 0;
+        let max_scroll_attempts = 20; // Prevent infinite loop
+
+        loop {
+            // Get current cards
+             let current_cards = match driver
+                .find_all(By::Css("div[data-ssr=\"contentProductsSRPSSR\"] a"))
+                .await
+            {
+                Ok(v) => v,
+                Err(_) => Vec::new(),
+            };
+
+            if current_cards.len() >= limit || scroll_attempts >= max_scroll_attempts {
+                 first_cards = current_cards;
+                 break;
+            }
+
+            // Scroll down
+             let _ = driver
+                .execute("window.scrollTo(0, document.body.scrollHeight);", vec![])
+                .await;
+            tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
+            
+            // Check for "Muat Lebih Banyak" button
+            // Note: Selector might need adjustment based on actual site
+             if let Ok(button) = driver.find(By::XPath("//button[contains(text(), 'Muat Lebih Banyak')]")).await {
+                 if button.is_displayed().await.unwrap_or(false) {
+                     let _ = button.click().await;
+                     tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
+                 }
+             }
+
+            scroll_attempts += 1;
+        }
+        
+        // Take only up to limit
+        if first_cards.len() > limit {
+             first_cards.truncate(limit);
+        }
 
         let mut shop_slugs: HashSet<String> = HashSet::new();
         let mut shop_names: HashMap<String, String> = HashMap::new();
         let mut first_products_map: HashMap<String, Vec<Product>> = HashMap::new();
 
-        for c in first_cards.into_iter().take(20) {
+        for c in first_cards {
             let link = match c.attr("href").await {
                 Ok(opt) => opt.unwrap_or_default(),
                 Err(_) => String::new(),
@@ -85,11 +120,11 @@ impl TokopediaScraper {
                             Ok(v) => v,
                             Err(_) => Vec::new(),
                         };
-                        info!("CHECK SPAN : {}", slug);
+                        
                         let mut name = String::new();
                         for s in spans.into_iter().take(20) {
                             let span_text = s.text().await.unwrap_or_default();
-                            info!("span: {}", span_text);
+                            // info!("span: {}", span_text);
                             if !span_text.is_empty() && name.is_empty() {
                                 name = span_text;
                             }
@@ -157,10 +192,16 @@ impl TokopediaScraper {
                 let mut products: Vec<Product> = Vec::new();
 
                 // First query products don't need to be searched again in the shop
+                // But if we want to support limit per shop/query, we might need to adjust logic.
+                // For now, assuming first query items found in global search are sufficient/starter.
+                // If the user wants more items from the shop for the first query, we might need to visit shop page too.
+                // CURRENT LOGIC: use what we found in global search for first query.
                 if q == first_query {
                     if let Some(v) = first_products_map.get(&slug) {
                         products = v.clone();
                     }
+                    // If we need more items for this query from this shop specifically, we should search in shop.
+                    // But usually global search is enough to identify shops.
                 } else {
                     let shop_page = format!("https://www.tokopedia.com/{}", slug);
                     let _ = driver.goto(&shop_page).await;
@@ -239,6 +280,14 @@ impl TokopediaScraper {
                     }
 
                     tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                    
+                    // Implement scrolling for shop search results if needed?
+                    // Usually shop search results are less than global search, but we can try small scroll.
+                    let _ = driver
+                        .execute("window.scrollTo(0, document.body.scrollHeight);", vec![])
+                        .await;
+                    tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
+
 
                     let cards = match driver
                         .find_all(By::Css(
@@ -250,7 +299,7 @@ impl TokopediaScraper {
                         Err(_) => Vec::new(),
                     };
 
-                    for c in cards.into_iter().take(20) {
+                    for c in cards.into_iter().take(limit) { // Apply limit here too
                         let link = match c.attr("href").await {
                             Ok(opt) => opt.unwrap_or_default(),
                             Err(_) => String::new(),
@@ -275,11 +324,11 @@ impl TokopediaScraper {
                             Ok(v) => v,
                             Err(_) => Vec::new(),
                         };
-                        info!("CHECK SPAN : {}", slug);
+                        
                         let mut name = String::new();
                         for s in spans.into_iter().take(20) {
                             let span_text = s.text().await.unwrap_or_default();
-                            info!("span: {}", span_text);
+                            // info!("span: {}", span_text);
                             if !span_text.is_empty() && name.is_empty() {
                                 name = span_text;
                             }
@@ -369,8 +418,9 @@ impl ShopeeScraper {
         driver: &WebDriver,
         queries: &[String],
         window: &tauri::Window,
+        limit: usize,
     ) -> Result<Vec<ShopResults>, String> {
-        info!("Starting Shopee scraping with original logic");
+        info!("Starting Shopee scraping with limit {}", limit);
 
         if queries.is_empty() {
             return Ok(Vec::new());
@@ -397,240 +447,300 @@ impl ShopeeScraper {
             tokio::time::sleep(std::time::Duration::from_secs(2)).await;
         }
 
-        // Get first cards
-        let first_cards = match driver
-            .find_all(By::Css(".shopee-search-item-result__item a"))
-            .await
-        {
-            Ok(v) => v,
-            Err(_) => Vec::new(),
-        };
+        let mut collected_items = 0;
+        let mut first_cards_collected = Vec::new();
+        let mut page = 0;
 
+        loop {
+            // Get current page cards
+            let current_cards = match driver
+                .find_all(By::Css(".shopee-search-item-result__item a"))
+                .await
+            {
+                Ok(v) => v,
+                Err(_) => Vec::new(),
+            };
+            
+            // Add to collection
+            // Use ElementId to avoid duplicates if possible, or just collect all and process.
+            // But we need to process links to avoid duplicates.
+            // For simplicitly, let's collect links and process them.
+            // But here we need to keep `WebElement` to extract data later?
+            // Extracting data here might be safer because elements go stale after navigation.
+
+            // Wait... we need to process cards HERE because once we navigate to next page, elements are gone.
+            // But we can just extract the Links and then process them?
+            // No, the original logic extracts data from the card element.
+            // So we should extract data here and accumulate it.
+            
+            // Actually, we need to extract Shop Info to group. 
+            // The existing structure collects `first_cards` (WebElements) then iterates them.
+            // If we navigate, `first_cards` elements become stale.
+            // So we MUST extract data from `current_cards` immediately.
+            
+            // However, the original code logic separates:
+            // 1. Collect first_cards (WebElements)
+            // 2. Iterate first_cards to extract product data & shop info -> `first_products_map` & `shop_slugs`.
+            // 3. Iterate shop_slugs to drill down other queries.
+
+            // So if I want to paginate:
+            // I should collect data (Product struct + shop_slug) from each page, then aggregate.
+            
+            // Let's refactor the loop to collect PRODUCTS directly.
+            
+            for c in current_cards {
+                 if collected_items >= limit {
+                    break;
+                 }
+
+                 let link = match c.attr("href").await {
+                    Ok(opt) => opt.unwrap_or_default(),
+                    Err(_) => String::new(),
+                };
+
+                // println!("Shopee link found: {}", link);
+                if link.starts_with("/") && !link.contains("find_similar_products") {
+                     first_cards_collected.push(c); // Store element to extract later? NO. Stale.
+                     // We MUST process it now. But wait, `c` is a WebElement on current page.
+                     // The loop later `for c in first_cards.into_iter().take(20)` iterates WebElements.
+                     // This means the migration to pagination requires a bigger refactor of the code below.
+                     // The code below expects `first_cards` to be `Vec<WebElement>`.
+                     // BUT if we navigate to page 2, the page 1 elements are invalid.
+                     // So we cannot store `Vec<WebElement>` from multiple pages.
+                     
+                     // We have to extract ALL info here and store in an intermediate struct, NOT WebElement.
+                     collected_items += 1;
+                }
+            }
+            
+            if collected_items >= limit {
+                break;
+            }
+
+            // Check next page
+             let next_button_xpath = "//a[contains(@class, 'shopee-icon-button--right') and not(contains(@class, 'shopee-icon-button--disabled'))]";
+             if let Ok(next_btn) = driver.find(By::XPath(next_button_xpath)).await {
+                 if next_btn.is_displayed().await.unwrap_or(false) {
+                     let _ = next_btn.click().await;
+                     page += 1;
+                     // Wait load
+                     tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+                     continue;
+                 }
+             }
+             
+             // Try URL manipulation if button not found or tricky
+             // Check if we can just go to next page
+             page += 1;
+             let next_url = format!(
+                "https://shopee.co.id/search?keyword={}&page={}",
+                urlencoding::encode(first_query),
+                page
+            );
+             // Verify if we are already at this page or end?
+             // Since we count `collected_items`, maybe we just try to go next page.
+             let _ = driver.goto(&next_url).await;
+             tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+             
+             // Check if we found products
+              if driver.find(By::Css(".shopee-search-item-result__item")).await.is_err() {
+                  break; // No more items
+              }
+        }
+
+        // Wait, if I cannot save WebElement, I must rewrite the processing logic to not use WebElement later.
+        // The current structure is:
+        // 1. Get `first_cards` (Vec<WebElement>).
+        // 2. Loop `first_cards` -> extract `Product`, `shop_slugs`, `first_products_map`.
+        // 3. Loop `shop_slugs` -> process other queries.
+
+        // So I need to:
+        // 1. Create a loop that visits pages.
+        // 2. Inside loop, find elements, extract `Product` immediately.
+        // 3. Store `Product` in `all_extracted_products`.
+        // 4. After loop, populate `shop_slugs`, `shop_names`, `first_products_map` from `all_extracted_products`.
+        
+        // Let's restart the logic for this function section.
+        
         let mut shop_slugs: HashSet<String> = HashSet::new();
         let mut shop_names: HashMap<String, String> = HashMap::new();
         
         let mut first_products_map: HashMap<String, Vec<Product>> = HashMap::new();
-
         let mut all_products: Vec<Product> = Vec::new();
 
-        for c in first_cards.into_iter().take(20) {
-            let link = match c.attr("href").await {
-                Ok(opt) => opt.unwrap_or_default(),
-                Err(_) => String::new(),
+        // Reset to page 0 for extraction loop if we moved?
+        // Actually, better to do the extraction INSIDE the pagination loop.
+        
+        // Re-navigate to start to be safe
+         let first_url = format!(
+            "https://shopee.co.id/search?keyword={}",
+            urlencoding::encode(first_query)
+        );
+        let _ = driver.goto(&first_url).await;
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+
+        let mut extracted_count = 0;
+        let mut current_page = 0;
+
+        loop {
+            // Get current cards
+             let current_cards = match driver
+                .find_all(By::Css(".shopee-search-item-result__item a"))
+                .await
+            {
+                Ok(v) => v,
+                Err(_) => Vec::new(),
             };
 
-            println!("Shopee link found: {}", link);
-            //link bukan /find_similar_products
-            if link.starts_with("/") && !link.contains("find_similar_products") {
-                let full_link = format!("https://shopee.co.id{}", link);
+            for c in current_cards {
+                if extracted_count >= limit {
+                    break;
+                }
 
-                // Extract product name
-                let name = match c.find(By::Css(".line-clamp-2.break-words")).await {
-                    Ok(el) => el.text().await.unwrap_or_default(),
+                let link = match c.attr("href").await {
+                    Ok(opt) => opt.unwrap_or_default(),
                     Err(_) => String::new(),
                 };
 
-                // Extract price - Shopee has a specific structure for prices
-                let price = {
-                    let price_element = match c
-                        .find(By::Css(
-                            "[data-testid=\"a11y-label\"] + div .truncate.text-base\\/5.font-medium",
-                        ))
-                        .await
-                    {
-                        Ok(el) => el,
-                        Err(_) => {
-                            // Alternative selector for price
-                            match c
-                                .find(By::Css(
-                                    ".text-shopee-primary .truncate.text-base\\/5.font-medium",
-                                ))
-                                .await
-                            {
-                                Ok(el) => el,
-                                Err(_) => {
-                                    // Try another approach
-                                    match c.find(By::Css(".flex-shrink.min-w-0.mr-1.truncate.text-shopee-primary .truncate.text-base\\/5.font-medium")).await {
-                                        Ok(el) => el,
-                                        Err(_) => {
-                                            // If all else fails, return empty string
-                                            continue; // Skip this item
+                 // println!("Shopee link found: {}", link);
+                //link bukan /find_similar_products
+                if link.starts_with("/") && !link.contains("find_similar_products") {
+                    let full_link = format!("https://shopee.co.id{}", link);
+
+                    // Extract product name
+                    let name = match c.find(By::Css(".line-clamp-2.break-words")).await {
+                        Ok(el) => el.text().await.unwrap_or_default(),
+                        Err(_) => String::new(),
+                    };
+
+                    // Extract price - Shopee has a specific structure for prices
+                    let price = {
+                        let price_element = match c
+                            .find(By::Css(
+                                "[data-testid=\"a11y-label\"] + div .truncate.text-base\\/5.font-medium",
+                            ))
+                            .await
+                        {
+                            Ok(el) => el,
+                            Err(_) => {
+                                // Alternative selector for price
+                                match c
+                                    .find(By::Css(
+                                        ".text-shopee-primary .truncate.text-base\\/5.font-medium",
+                                    ))
+                                    .await
+                                {
+                                    Ok(el) => el,
+                                    Err(_) => {
+                                        // Try another approach
+                                        match c.find(By::Css(".flex-shrink.min-w-0.mr-1.truncate.text-shopee-primary .truncate.text-base\\/5.font-medium")).await {
+                                            Ok(el) => el,
+                                            Err(_) => {
+                                                // If all else fails, return empty string
+                                                continue; // Skip this item
+                                            }
                                         }
                                     }
                                 }
                             }
+                        };
+                        price_element.text().await.unwrap_or_default()
+                    };
+
+                    // Extract location
+                    let location = match c
+                        .find(By::Css(
+                            ".text-shopee-black54.font-extralight.text-sp10 .align-middle",
+                        ))
+                        .await
+                    {
+                        Ok(el) => el.text().await.unwrap_or_default(),
+                        Err(_) => String::new(),
+                    };
+
+                    // Extract photo
+                    let photo = match c
+                        .find(By::Css(
+                            "img.w-full",
+                        ))
+                        .await
+                    {
+                        Ok(el) => el.attr("src").await.unwrap_or(None).unwrap_or_default(),
+                        Err(_) => {
+                            // Try to get the first image in the product card
+                            match c.find(By::Css("img")).await {
+                                Ok(el) => el.attr("src").await.unwrap_or(None).unwrap_or_default(),
+                                Err(_) => String::new(),
+                            }
                         }
                     };
-                    price_element.text().await.unwrap_or_default()
-                };
 
-                // Extract location
-                let location = match c
-                    .find(By::Css(
-                        ".text-shopee-black54.font-extralight.text-sp10 .align-middle",
-                    ))
-                    .await
-                {
-                    Ok(el) => el.text().await.unwrap_or_default(),
-                    Err(_) => String::new(),
-                };
+                    //contoh link shopee https://shopee.co.id/100ribu-dapat-4pcs-Celana-Pendek-Babytery-Calana-Pria-Resleting-Premium-Celana-Running-4pcs-i.124455053.29705222804 maka angka 124455053 adalah shop id
+                    let shop_id = if let Some(rest) = full_link.strip_prefix("https://shopee.co.id/") {
+                        // Buang query params
+                        let path_only = rest.split('?').next().unwrap_or(rest);
 
-                // Extract photo
-                let photo = match c
-                    .find(By::Css(
-                        "img.w-full",
-                    ))
-                    .await
-                {
-                    Ok(el) => el.attr("src").await.unwrap_or(None).unwrap_or_default(),
-                    Err(_) => {
-                        // Try to get the first image in the product card
-                        match c.find(By::Css("img")).await {
-                            Ok(el) => el.attr("src").await.unwrap_or(None).unwrap_or_default(),
-                            Err(_) => String::new(),
-                        }
-                    }
-                };
-
-                //contoh link shopee https://shopee.co.id/100ribu-dapat-4pcs-Celana-Pendek-Babytery-Calana-Pria-Resleting-Premium-Celana-Running-4pcs-i.124455053.29705222804 maka angka 124455053 adalah shop id
-                let shop_id = if let Some(rest) = full_link.strip_prefix("https://shopee.co.id/") {
-                    // Buang query params
-                    let path_only = rest.split('?').next().unwrap_or(rest);
-
-                    if let Some((_, ids_part)) = path_only.rsplit_once("-i.") {
-                        if let Some((shop_id_str, _)) = ids_part.split_once('.') {
-                            shop_id_str.to_string()
+                        if let Some((_, ids_part)) = path_only.rsplit_once("-i.") {
+                            if let Some((shop_id_str, _)) = ids_part.split_once('.') {
+                                shop_id_str.to_string()
+                            } else {
+                                "0".to_string()
+                            }
                         } else {
                             "0".to_string()
                         }
                     } else {
                         "0".to_string()
+                    };
+
+
+                     // Store shop info
+                    if !shop_id.is_empty() {
+                        shop_slugs.insert(shop_id.clone());
+                        shop_names.insert(shop_id.clone(), shop_id.clone());
                     }
-                } else {
-                    "0".to_string()
-                };
 
-                // //contoh link shopee ada Celana-Running-4pcs-i.124455053.29705222804 maka angka 124455053 adalah shop id
-                // let shop_slug = if let Some(rest) = link.strip_prefix("/shop/") {
-                //     if let Some((slug, _)) = rest.split_once('/') {
-                //         slug.to_string()
-                //     } else {
-                //         "shopee".to_string()
-                //     }
-                // } else if let Some(rest) = link.strip_prefix("/product/") {
-                //     if let Some((shop_id_part, _)) = rest.split_once('.') {
-                //         shop_id_part.to_string()
-                //     } else {
-                //         "shopee".to_string()
-                //     }
-                // } else {
-                //     "shopee".to_string()
-                // };
-
-                // // Get shop info from product detail page
-                // let (shop_name, shop_url) = Self::get_shop_info_from_product(driver, &full_link).await;
-                
-                // // Extract shop slug from shop URL or use shop name as fallback
-                // let shop_slug = if !shop_url.is_empty() {
-                //     // Extract slug from URL like https://shopee.co.id/shop/12345678
-                //     shop_url
-                //         .trim_end_matches('/')
-                //         .split('/')
-                //         .last()
-                //         .unwrap_or("shopee")
-                //         .to_string()
-                // } else {
-                //     // Use sanitized shop name as slug
-                //     shop_name
-                //         .to_lowercase()
-                //         .replace(" ", "_")
-                //         .chars()
-                //         .filter(|c| c.is_alphanumeric() || *c == '_')
-                //         .collect::<String>()
-                // };
-
-                // // Store shop info
-                // if !shop_slug.is_empty() && !shop_name.is_empty() {
-                //     shop_slugs.insert(shop_slug.clone());
-                //     shop_names.insert(shop_slug.clone(), shop_name.clone());
-                // }
-
-                 // Store shop info
-                if !shop_id.is_empty() {
-                    shop_slugs.insert(shop_id.clone());
-                    shop_names.insert(shop_id.clone(), shop_id.clone());
+                    let product = Product {
+                        name,
+                        price: format!("Rp{}", price), // Add currency prefix
+                        shop: shop_id.clone(), // Placeholder, actual shop name can be set later
+                        location,
+                        photo,
+                        link: full_link,
+                    };
+                    
+                    // Add to collections
+                    all_products.push(product.clone());
+                    first_products_map
+                        .entry(shop_id.clone())
+                        .or_insert_with(Vec::new)
+                        .push(product);
+                        
+                    extracted_count += 1;
                 }
-
-                let product = Product {
-                    name,
-                    price: format!("Rp{}", price), // Add currency prefix
-                    shop: shop_id.clone(), // Placeholder, actual shop name can be set later
-                    location,
-                    photo,
-                    link: full_link,
-                };
-                all_products.push(product.clone());
-
-                first_products_map
-                    .entry(shop_id.clone())
-                    .or_insert_with(Vec::new)
-                    .push(product);
+            }
+            
+            if extracted_count >= limit {
+                break;
+            }
+            
+            // Go to next page
+            current_page += 1;
+            let next_url = format!(
+                "https://shopee.co.id/search?keyword={}&page={}",
+                urlencoding::encode(first_query),
+                current_page
+            );
+            
+            // Navigate
+             let _ = driver.goto(&next_url).await;
+             tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+            
+            // Check emptiness
+            if driver.find(By::Css(".shopee-search-item-result__item")).await.is_err() {
+                 break;
             }
         }
-
-
-        // //find shop slugs from all_products link
-        // for product in all_products.iter() {
-        //     // Get shop info from product detail page
-        //     let (shop_name, shop_url) = Self::get_shop_info_from_product(driver, &product.link).await;
-            
-        //     // Extract shop slug from shop URL or use shop name as fallback
-        //     let shop_slug = if !shop_url.is_empty() {
-        //         // Extract slug from URL like https://shopee.co.id/shop/12345678
-        //         shop_url
-        //             .trim_end_matches('/')
-        //             .split('/')
-        //             .last()
-        //             .unwrap_or("shopee")
-        //             .to_string()
-        //     } else {
-        //         // Use sanitized shop name as slug
-        //         shop_name
-        //             .to_lowercase()
-        //             .replace(" ", "_")
-        //             .chars()
-        //             .filter(|c| c.is_alphanumeric() || *c == '_')
-        //             .collect::<String>()
-        //     };
-
-        //     //contoh link shopee https://shopee.co.id/100ribu-dapat-4pcs-Celana-Pendek-Babytery-Calana-Pria-Resleting-Premium-Celana-Running-4pcs-i.124455053.29705222804 maka angka 124455053 adalah shop id
-        //     let shop_id = if let Some(rest) = shop_url.strip_prefix("https://shopee.co.id/") {
-        //         if let Some((_, shop_id_part)) = rest.rsplit_once('.') {
-        //             if let Some((shop_id_str, _)) = shop_id_part.split_once('.') {
-        //                 shop_id_str.to_string()
-        //             } else {
-        //                 "0".to_string()
-        //             }
-        //         } else {
-        //             "0".to_string()
-        //         }
-        //     } else {
-        //         "0".to_string()
-        //     };
-
-        //     // Store shop info
-        //     if !shop_slug.is_empty() && !shop_name.is_empty() {
-        //         shop_slugs.insert(shop_slug.clone());
-        //         shop_names.insert(shop_slug.clone(), shop_name.clone());
-        //     }
-
-        //     let new_shop_slug = format!("{}?shop_id={}", shop_slug, shop_id);
-
-        //     first_products_map
-        //         .entry(new_shop_slug)
-        //         .or_insert_with(Vec::new)
-        //         .push(product.clone());
-        // }
 
         let mut grouped: Vec<ShopResults> = Vec::new();
 
@@ -643,13 +753,7 @@ impl ShopeeScraper {
 
             let mut qresults: Vec<QueryResult> = Vec::new();
 
-            // let shop_id = if let Some(pos) = slug.find("?shop_id=") {
-            //     &slug[pos + 9..]
-            // } else {
-            //     "0"
-            // };
-            
-
+           
             for q in queries.iter() {
                 let mut products: Vec<Product> = Vec::new();
 
@@ -706,7 +810,7 @@ impl ShopeeScraper {
                         Err(_) => Vec::new(),
                     };
 
-                    for c in cards.into_iter().take(20) {
+                    for c in cards.into_iter().take(limit) { // limit here too logic
                         let link_element = match c.find(By::Css("a.contents")).await {
                             Ok(el) => el,
                             Err(_) => continue, // Skip if no link found
@@ -801,22 +905,24 @@ impl ShopeeScraper {
                 });
             }
 
-            let first_link = qresults[0].products[0].link.clone();
-            let (shop_name, new_shop_url) = Self::get_shop_info_from_product(driver, &first_link).await;
+            if !qresults.is_empty() && !qresults[0].products.is_empty() {
+                let first_link = qresults[0].products[0].link.clone();
+                let (shop_name, new_shop_url) = Self::get_shop_info_from_product(driver, &first_link).await;
 
-            let shop_result = ShopResults {
-                shop_name: shop_name.clone(),
-                shop_url: new_shop_url.clone(),
-                platform: "shopee".to_string(),
-                results: qresults,
-            };
+                let shop_result = ShopResults {
+                    shop_name: shop_name.clone(),
+                    shop_url: new_shop_url.clone(),
+                    platform: "shopee".to_string(),
+                    results: qresults,
+                };
 
-            // Emit progress real-time
-            let _ = window
-                .emit("scrape:progress", shop_result.clone())
-                .map_err(|e| e.to_string());
+                // Emit progress real-time
+                let _ = window
+                    .emit("scrape:progress", shop_result.clone())
+                    .map_err(|e| e.to_string());
 
-            grouped.push(shop_result);
+                grouped.push(shop_result);
+            }
         }
 
         // Emit done

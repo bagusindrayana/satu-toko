@@ -17,6 +17,7 @@ function App() {
   const [expandedShops, setExpandedShops] = useState({}); // Track expanded shops
   const [expandedQueries, setExpandedQueries] = useState({}); // Track expanded queries
   const [selectedPlatform, setSelectedPlatform] = useState("tokopedia"); // Default to tokopedia
+  const [searchLimit, setSearchLimit] = useState(20); // Default limit
   const [showCopyNotification, setShowCopyNotification] = useState(false); // Track copy notification
   const [chromeProfilePath, setChromeProfilePath] = useState(""); // Chrome profile path
   const [profileSaving, setProfileSaving] = useState(false); // Track save state
@@ -93,9 +94,9 @@ function App() {
           sum +
           (shop.results
             ? shop.results.reduce(
-                (s, r) => s + (r.products ? r.products.length : 0),
-                0,
-              )
+              (s, r) => s + (r.products ? r.products.length : 0),
+              0,
+            )
             : 0)
         );
       }, 0);
@@ -157,6 +158,7 @@ function App() {
       const res = await invoke("scrape_products", {
         queries: tags,
         platform: selectedPlatform,
+        limit: parseInt(searchLimit) || 20,
       });
       setResults(res);
       // Save to history after successful search (with full results data)
@@ -533,11 +535,11 @@ function App() {
                 {searchHistory.length > 0 && (
                   <div
                     className="modal-actions"
-                    // style={{
-                    //   borderTop: "1px solid #e5e7eb",
-                    //   paddingTop: "16px",
-                    //   marginTop: "16px",
-                    // }}
+                  // style={{
+                  //   borderTop: "1px solid #e5e7eb",
+                  //   paddingTop: "16px",
+                  //   marginTop: "16px",
+                  // }}
                   >
                     <button
                       onClick={clearAllHistory}
@@ -711,6 +713,17 @@ function App() {
               </select>
             </div>
             <div className="form-group">
+              <label className="form-label">Max Items</label>
+              <input
+                type="number"
+                value={searchLimit}
+                onChange={(e) => setSearchLimit(e.target.value)}
+                className="form-select"
+                min="1"
+                max="500"
+              />
+            </div>
+            <div className="form-group">
               <button
                 onClick={onSearch}
                 disabled={tags.length === 0}
@@ -788,8 +801,8 @@ function App() {
                       {shop.platform === "tokopedia" ? "Tokopedia" : "Shopee"} (
                       {shop.results
                         ? shop.results.filter(
-                            (r) => r.products && r.products.length > 0,
-                          ).length
+                          (r) => r.products && r.products.length > 0,
+                        ).length
                         : 0}
                       /{shop.results ? shop.results.length : 0})
                     </h4>

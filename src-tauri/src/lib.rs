@@ -28,8 +28,9 @@ async fn scrape_products(
     window: tauri::Window,
     queries: Vec<String>,
     platform: String,
+    limit: usize,
 ) -> Result<Vec<ShopResults>, String> {
-    scraper::scrape_products(window, queries, platform).await
+    scraper::scrape_products(window, queries, platform, limit).await
 }
 
 #[tauri::command]
