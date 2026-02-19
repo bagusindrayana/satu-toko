@@ -1,4 +1,5 @@
 use log::{error, info};
+use rand::Rng;
 use std::env;
 use std::fs;
 use std::io::Cursor;
@@ -32,17 +33,25 @@ pub async fn ensure_chromedriver() -> Result<String, String> {
         _ => return Err("Unsupported OS!".to_string()),
     };
 
-    let driver_path = driver_dir.join(driver_filename);
+    let patched_filename = match os {
+        "linux" => "chromedriver_PATCHED",
+        "macos" => "chromedriver_PATCHED",
+        "windows" => "chromedriver_PATCHED.exe",
+        _ => return Err("Unsupported OS!".to_string()),
+    };
 
-    // Check if chromedriver exists and is compatible
-    if driver_path.exists() {
-        if let Ok(existing_version) = get_existing_driver_version(&driver_path).await {
+    let driver_path = driver_dir.join(driver_filename);
+    let patched_path = driver_dir.join(patched_filename);
+
+    // Check if patched chromedriver exists and is compatible
+    if patched_path.exists() {
+        if let Ok(existing_version) = get_existing_driver_version(&patched_path).await {
             if existing_version.starts_with(major_version) {
-                info!("Compatible chromedriver already exists");
-                return Ok(driver_path.to_string_lossy().to_string());
+                info!("Compatible patched chromedriver already exists");
+                return Ok(patched_path.to_string_lossy().to_string());
             } else {
                 info!(
-                    "Existing chromedriver version {} is incompatible with Chrome {}",
+                    "Existing patched chromedriver version {} is incompatible with Chrome {}",
                     existing_version, chrome_version
                 );
             }
@@ -53,7 +62,10 @@ pub async fn ensure_chromedriver() -> Result<String, String> {
     info!("Downloading compatible chromedriver...");
     download_chromedriver(&driver_path, major_version, os).await?;
 
-    Ok(driver_path.to_string_lossy().to_string())
+    // Patch the driver
+    patch_driver(&driver_path, &patched_path)?;
+
+    Ok(patched_path.to_string_lossy().to_string())
 }
 
 async fn get_existing_driver_version(driver_path: &Path) -> Result<String, String> {
@@ -117,6 +129,8 @@ async fn download_chromedriver(
         driver_version, platform, platform
     );
 
+    println!("Download URL : {}", download_url);
+
     // Download and extract
     let response = client
         .get(&download_url)
@@ -133,16 +147,38 @@ async fn download_chromedriver(
     let mut archive =
         ZipArchive::new(cursor).map_err(|e| format!("Failed to open zip archive: {}", e))?;
 
-    // Extract chromedriver
-    let chromedriver_name = match os {
+    // Extract chromedriver - ChromeDriver ZIP now has nested structure like "chromedriver-win64/chromedriver.exe"
+    let chromedriver_filename = match os {
         "linux" | "macos" => "chromedriver",
         "windows" => "chromedriver.exe",
         _ => return Err("Unsupported OS!".to_string()),
     };
 
+    // Find the chromedriver file in the archive (could be nested in a folder)
+    let mut chromedriver_entry_name: Option<String> = None;
+    for i in 0..archive.len() {
+        let file = archive
+            .by_index(i)
+            .map_err(|e| format!("Failed to read archive entry: {}", e))?;
+        let name = file.name();
+        if name.ends_with(chromedriver_filename) && !name.ends_with("/") {
+            chromedriver_entry_name = Some(name.to_string());
+            break;
+        }
+    }
+
+    let entry_name = chromedriver_entry_name.ok_or_else(|| {
+        format!(
+            "Failed to find chromedriver in archive: {} not found",
+            chromedriver_filename
+        )
+    })?;
+
+    info!("Found chromedriver in archive at: {}", entry_name);
+
     let mut file = archive
-        .by_name(chromedriver_name)
-        .map_err(|e| format!("Failed to find chromedriver in archive: {}", e))?;
+        .by_name(&entry_name)
+        .map_err(|e| format!("Failed to extract chromedriver from archive: {}", e))?;
 
     let mut contents = Vec::new();
     use std::io::Read;
@@ -167,48 +203,89 @@ async fn download_chromedriver(
     Ok(())
 }
 
-pub fn patch_driver(driver_path: &Path) -> Result<(), String> {
+pub fn patch_driver(original_path: &Path, patched_path: &Path) -> Result<(), String> {
     use std::fs::File;
     use std::io::{Read, Write};
 
-    info!("Patching chromedriver...");
+    info!("Starting ChromeDriver executable patch...");
 
+    // Check if patched version already exists
+    if patched_path.exists() {
+        info!("Detected patched chromedriver executable!");
+        return Ok(());
+    }
+
+    // Read the original chromedriver
     let mut file =
-        File::open(driver_path).map_err(|e| format!("Failed to open chromedriver: {}", e))?;
+        File::open(original_path).map_err(|e| format!("Failed to open chromedriver: {}", e))?;
 
     let mut contents = Vec::new();
     file.read_to_end(&mut contents)
         .map_err(|e| format!("Failed to read chromedriver: {}", e))?;
 
-    // Find and replace the signature
-    let signature = b"cdc_ads_client_";
-    let replacement = b"abc_ads_client_";
+    let mut new_chromedriver_bytes = contents.clone();
+    let mut cdc_pos_list = Vec::new();
+    let mut is_cdc_present = false;
+    let mut patch_ct = 0;
 
-    if let Some(pos) = find_signature(&contents, signature) {
-        for i in 0..signature.len() {
-            contents[pos + i] = replacement[i];
-        }
-
-        let mut file = File::create(driver_path)
-            .map_err(|e| format!("Failed to create patched chromedriver: {}", e))?;
-
-        file.write_all(&contents)
-            .map_err(|e| format!("Failed to write patched chromedriver: {}", e))?;
-
-        info!("Chromedriver patched successfully");
-        Ok(())
-    } else {
-        Err("Signature not found in chromedriver".to_string())
-    }
-}
-
-fn find_signature(data: &[u8], signature: &[u8]) -> Option<usize> {
-    for i in 0..data.len() - signature.len() {
-        if &data[i..i + signature.len()] == signature {
-            return Some(i);
+    // Find all "cdc_" patterns in the binary
+    for i in 0..contents.len().saturating_sub(3) {
+        if &contents[i..i + 4] == b"cdc_" {
+            is_cdc_present = true;
+            cdc_pos_list.push(i);
         }
     }
-    None
+
+    match is_cdc_present {
+        true => info!("Found cdcs!"),
+        false => info!("No cdcs were found!"),
+    }
+
+    // Helper function to get random character
+    let get_random_char = || -> char {
+        const CHARSET: &[u8] = b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
+        let idx = rand::thread_rng().gen_range(0..CHARSET.len());
+        CHARSET[idx] as char
+    };
+
+    // Replace 18 characters after each "cdc_" with random characters
+    for i in cdc_pos_list {
+        for x in i + 4..i + 22 {
+            if x < new_chromedriver_bytes.len() {
+                new_chromedriver_bytes[x] = get_random_char() as u8;
+            }
+        }
+        patch_ct += 1;
+    }
+
+    info!("Patched {} cdcs!", patch_ct);
+
+    // Write the patched file
+    info!("Starting to write to binary file...");
+    let mut patched_file = File::create(patched_path)
+        .map_err(|e| format!("Failed to create patched chromedriver file: {}", e))?;
+
+    patched_file
+        .write_all(&new_chromedriver_bytes)
+        .map_err(|e| format!("Error when writing patch to file! Error: {}", e))?;
+
+    // Make executable on Unix systems
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = fs::metadata(patched_path)
+            .map_err(|e| format!("Failed to get file metadata: {}", e))?
+            .permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(patched_path, perms)
+            .map_err(|e| format!("Failed to set executable permissions: {}", e))?;
+    }
+
+    info!(
+        "Successfully wrote patched executable to '{}'!",
+        patched_path.display()
+    );
+    Ok(())
 }
 
 pub fn find_chrome_executable() -> Result<PathBuf, String> {
